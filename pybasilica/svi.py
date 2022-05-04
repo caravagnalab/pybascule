@@ -37,10 +37,14 @@ def model(params):
     # theta encodes the total number of mutations in each branch
     # parametarize the activity matrix as : theta * alpha
 
+    num_groups = max(params["groups"]) + 1
+
+    alpha_tissues = pyro.sample("alpha_tissues", dist.Normal(torch.zeros(num_groups, k_fixed + k_denovo), 1))
+
     # sample from the alpha prior
     with pyro.plate("K", k_fixed + k_denovo):   # columns
         with pyro.plate("N", num_samples):      # rows
-            alpha = pyro.sample("activities", dist.Normal(params["alpha"], 1))
+            alpha = pyro.sample("activities", dist.Normal(alpha_tissues[params["groups"], :], 1))
     
     alpha = torch.exp(alpha)                                # enforce non negativity
     alpha = alpha / (torch.sum(alpha, 1).unsqueeze(-1))     # normalize

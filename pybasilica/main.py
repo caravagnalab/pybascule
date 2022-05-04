@@ -18,7 +18,8 @@ def pyfit(M, B_input, k_list, cosmic_df, lr, steps_per_iter, fixedLimit, denovoL
         "M" :               torch.tensor(M.values).float(), 
         "beta_fixed" :      torch.tensor(B_input.values).float(), 
         "lr" :              lr, 
-        "steps_per_iter" :  steps_per_iter
+        "steps_per_iter" :  steps_per_iter,
+        "groups" : [1, 1, 2, 0, 2]
         }
 
     counter = 1
