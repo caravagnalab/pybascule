@@ -32,7 +32,7 @@ class PyBasilica():
         compile_model = True, 
         CUDA = False, 
         enforce_sparsity = False,
-        store_parameters = False
+        store_parameters = False,
         regularizer = "cosine"
         ):
         
