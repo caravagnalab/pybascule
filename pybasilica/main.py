@@ -48,7 +48,7 @@ def pyfit(M, groups, input_catalogue, reference_catalogue, k, lr, steps, phi, de
         # A_inf --- dtype: torch.Tensor
         # B_inf --- dtype: torch.Tensor
 
-        # A_inf ----- dtype: torch.Tensor
+        # A_inf ----- dtype: torch.Tensor 
         # B_input --- dtype: data.frame
         # theta ----- dtype: numpy
         input_catalogue_sub = fixedFilter(A_inf, input_catalogue, theta, phi)

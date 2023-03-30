@@ -13,7 +13,7 @@ setup(
     long_description_content_type = "text/markdown",
     url = "https://github.com/caravagnalab/pybasilica",
     packages = ["pybasilica"],
-    python_requires = ">=3.9",
+    python_requires = ">=3.8",
     install_requires = [
         "pandas>=1.4.2",
         "pyro-api>=0.1.2",
