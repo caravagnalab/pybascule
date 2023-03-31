@@ -10,9 +10,11 @@ from rich.table import Table
 from pybasilica.svi import PyBasilica
 #from svi import PyBasilica
 
-def single_run(x, k_denovo, lr=0.05, n_steps=500, enumer=False, cluster=None, groups=None, beta_fixed=None, compile_model = False, CUDA = False, enforce_sparsity = False, regularizer = "cosine", store_parameters=False):
+def single_run(x, k_denovo, lr=0.05, n_steps=500, enumer=False, cluster=None, groups=None, beta_fixed=None, compile_model = False, \
+               CUDA = False, enforce_sparsity = False, regularizer = "cosine", reg_weight = 1, store_parameters=False):
     
-    obj = PyBasilica(x, k_denovo, lr, n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed, compile_model = compile_model, CUDA = CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, store_parameters=store_parameters)
+    obj = PyBasilica(x, k_denovo, lr, n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed, compile_model = compile_model, \
+                     CUDA = CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, reg_weight = reg_weight, store_parameters=store_parameters)
     obj._fit()
     minBic = obj.bic
     bestRun = obj
@@ -20,7 +22,8 @@ def single_run(x, k_denovo, lr=0.05, n_steps=500, enumer=False, cluster=None, gr
     #for i in track(range(2), description="Processing..."):
     for i in range(2):
 
-        obj = PyBasilica(x, k_denovo, lr, n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed, compile_model = compile_model, CUDA = CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, store_parameters=store_parameters)
+        obj = PyBasilica(x, k_denovo, lr, n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed, compile_model = compile_model, \
+                         CUDA = CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, reg_weight = reg_weight, store_parameters=store_parameters)
         obj._fit()
 
         if obj.bic < minBic:
@@ -31,7 +34,8 @@ def single_run(x, k_denovo, lr=0.05, n_steps=500, enumer=False, cluster=None, gr
 
 
 
-def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", cluster=None, groups=None, beta_fixed=None, compile_model = False, CUDA = False, enforce_sparsity = False, regularizer = "cosine", store_parameters=False, verbose=True):
+def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", cluster=None, groups=None, beta_fixed=None, compile_model = False, \
+        CUDA = False, enforce_sparsity = False, regularizer = "cosine", reg_weight = 1, store_parameters=False, verbose=True):
 
     if isinstance(k_list, list):
         if len(k_list) > 0:
@@ -80,9 +84,8 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", clus
 
             task = progress.add_task("[red]running...", total=len(k_list))
 
-            obj = single_run(x=x, k_denovo=k_list[0], lr=lr, n_steps=n_steps, enumer=enumer, cluster=cluster, groups=groups, 
-            beta_fixed=beta_fixed, compile_model = compile_model, 
-            CUDA=CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, store_parameters=store_parameters)
+            obj = single_run(x=x, k_denovo=k_list[0], lr=lr, n_steps=n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed, compile_model = compile_model, \
+                             CUDA=CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, reg_weight = reg_weight, store_parameters=store_parameters)
             minBic = obj.bic
             bestRun = obj
             progress.console.print(f"Running on k_denovo={k_list[0]} | BIC={obj.bic}")
@@ -92,9 +95,8 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", clus
             
                 try:
 
-                    obj = single_run(x=x, k_denovo=k, lr=lr, n_steps=n_steps, enumer=enumer, cluster=cluster,
-                    groups=groups, beta_fixed=beta_fixed, compile_model=compile_model, CUDA = CUDA, 
-                    enforce_sparsity = enforce_sparsity, regularizer = regularizer, store_parameters=store_parameters)
+                    obj = single_run(x=x, k_denovo=k, lr=lr, n_steps=n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed, compile_model=compile_model, \
+                                     CUDA = CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, reg_weight = reg_weight, store_parameters=store_parameters)
 
                     if obj.bic < minBic:
                         minBic = obj.bic
@@ -129,17 +131,16 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", clus
     # Non-verbose run ==============================================
     #===============================================================
 
-        obj = single_run(x=x, k_denovo=k_list[0], lr=lr, n_steps=n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed,
-        compile_model = compile_model, CUDA = CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, store_parameters=store_parameters)
+        obj = single_run(x=x, k_denovo=k_list[0], lr=lr, n_steps=n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed, compile_model = compile_model, \
+                         CUDA = CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, reg_weight = reg_weight, store_parameters=store_parameters)
         minBic = obj.bic
         bestRun = obj
         
         for k in k_list[1:]:
             try:
 
-                obj = single_run(x=x, k_denovo=k, lr=lr, n_steps=n_steps, enumer=enumer, cluster=cluster, groups=groups,
-                beta_fixed=beta_fixed, compile_model = compile_model, CUDA = CUDA,
-                enforce_sparsity = enforce_sparsity, regularizer = regularizer, store_parameters=store_parameters)
+                obj = single_run(x=x, k_denovo=k, lr=lr, n_steps=n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed, compile_model = compile_model, \
+                                 CUDA = CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, reg_weight = reg_weight, store_parameters=store_parameters)
                 if obj.bic < minBic:
                     minBic = obj.bic
                     bestRun = obj
