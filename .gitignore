@@ -1,10 +1,8 @@
 .vscode
 build/
 dist/
-pybasilica/test.py
 *.egg-info
 __pycache__
 **.DS_Store
 **.ipynb_checkpoints*
-.DS_Store
-.DS_Store
+
