@@ -34,7 +34,8 @@ class PyBasilica():
         enforce_sparsity = False,
         store_parameters = False,
         regularizer = "cosine",
-        reg_weight = 1
+        reg_weight = 1,
+        reg_bic = False
         ):
         
         self._set_data_catalogue(x)
@@ -51,6 +52,7 @@ class PyBasilica():
         self.enforce_sparsity = enforce_sparsity
         self.regularizer = regularizer
         self.reg_weight = reg_weight
+        self.reg_bic = reg_bic
         self._set_groups(groups)
         self._check_args()
 
@@ -182,6 +184,7 @@ class PyBasilica():
                 ## TODO might try to insert the alpha here
 
                 lk =  dist.Poisson(torch.matmul(torch.matmul(torch.diag(torch.sum(self.x, axis=1)), alpha), beta)).log_prob(self.x)
+                # pyro.factor("loss", lk + self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1]))
                 pyro.factor("loss", lk.sum() + self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1]))
 
 
@@ -255,7 +258,7 @@ class PyBasilica():
             with pyro.plate("contexts", 96):
                 with pyro.plate("k_denovo", k_denovo):
                     beta = pyro.param("beta_denovo", beta_mean, constraint=constraints.greater_than_eq(0))
-                    beta = torch.clamp(beta, 0,1)
+                    # beta = torch.clamp(beta, 0,1)
                     pyro.sample("latent_signatures", dist.Delta(beta))
 
     
@@ -286,7 +289,7 @@ class PyBasilica():
               loss += torch.log(F.kl_div(torch.log(fixed), torch.log(denovo), log_target = True, reduction="batchmean"))
 
         return loss
-    
+
 
     def _get_unique_beta(self, beta_fixed, beta_denovo):
         if beta_fixed is None:
@@ -550,6 +553,11 @@ class PyBasilica():
         alpha = self.alpha
 
         _log_like = self._likelihood(M, alpha, self.beta_fixed, self.beta_denovo)
+
+        ## adding regularizer
+        if self.reg_bic:
+            reg = self._regularizer(self.beta_fixed, self.beta_denovo, reg_type = self.regularizer)
+            _log_like += self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1])
 
         k = (alpha.shape[0] * (alpha.shape[1])) + ((self.k_denovo + self.k_fixed) * M.shape[1])
         n = M.shape[0] * M.shape[1]
