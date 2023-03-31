@@ -33,7 +33,8 @@ class PyBasilica():
         CUDA = False, 
         enforce_sparsity = False,
         store_parameters = False,
-        regularizer = "cosine"
+        regularizer = "cosine",
+        reg_weight = 1
         ):
         
         self._set_data_catalogue(x)
@@ -49,6 +50,7 @@ class PyBasilica():
         self.CUDA = CUDA
         self.enforce_sparsity = enforce_sparsity
         self.regularizer = regularizer
+        self.reg_weight = reg_weight
         self._set_groups(groups)
         self._check_args()
 
@@ -180,8 +182,8 @@ class PyBasilica():
                 ## TODO might try to insert the alpha here
 
                 lk =  dist.Poisson(torch.matmul(torch.matmul(torch.diag(torch.sum(self.x, axis=1)), alpha), beta)).log_prob(self.x)
-                pyro.factor("loss", lk.sum() + (reg * self.x.shape[0] * self.x.shape[1]))
-    
+                pyro.factor("loss", lk.sum() + self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1]))
+
 
     def guide(self):
 
@@ -282,7 +284,7 @@ class PyBasilica():
           for fixed in beta_fixed:
             for denovo in beta_denovo:
               loss += torch.log(F.kl_div(torch.log(fixed), torch.log(denovo), log_target = True, reduction="batchmean"))
-        #print("loss:", loss)
+
         return loss
     
 
@@ -295,8 +297,8 @@ class PyBasilica():
             beta = torch.cat((beta_fixed, beta_denovo), axis=0)
 
         return beta
-    
-    
+
+
     def _likelihood(self, M, alpha, beta_fixed, beta_denovo):
         
         # if beta_fixed is None:
@@ -313,8 +315,8 @@ class PyBasilica():
         _log_like = float("{:.3f}".format(_log_like_sum.item()))
 
         return _log_like
-    
-    
+
+
     def _fit(self):
         pyro.clear_param_store()  # always clear the store before the inference
         if self.CUDA and torch.cuda.is_available():
@@ -324,7 +326,7 @@ class PyBasilica():
                 self.beta_fixed = self.beta_fixed.cuda()
         else:
             torch.set_default_tensor_type(t=torch.FloatTensor)
-        
+
         if self.cluster != None and self.enumer != False:
             elbo = TraceEnum_ELBO()
         elif self.compile_model and not self.CUDA:
@@ -370,7 +372,7 @@ class PyBasilica():
 
             if self.store_parameters:
                 train_params.append(self.get_param_dict())
-        
+
         '''
         t = trange(self.n_steps, desc='Bar desc', leave = True)
         for step in t:   # inference - do gradient steps
