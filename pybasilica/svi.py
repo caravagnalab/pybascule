@@ -66,6 +66,7 @@ class PyBasilica():
         try:
             self.x = torch.tensor(x.values).float()
             self.n_samples = x.shape[0]
+            self.contexts = x.shape[1]
         except:
             raise Exception("Invalid mutations catalogue, expected Dataframe!")
 
@@ -160,8 +161,8 @@ class PyBasilica():
         if k_denovo==0:
             beta_denovo = None
         else:
-            #beta_mean = dist.Normal(torch.zeros(k_denovo, 96), 1).sample()
-            with pyro.plate("contexts", 96):            # columns
+            #beta_mean = dist.Normal(torch.zeros(k_denovo, self.contexts), 1).sample()
+            with pyro.plate("contexts", self.contexts):            # columns
                 with pyro.plate("k_denovo", k_denovo):  # rows
                     beta_denovo = pyro.sample("latent_signatures", dist.HalfNormal(1))
 
@@ -179,7 +180,7 @@ class PyBasilica():
             beta = torch.cat((self.beta_fixed, beta_denovo), axis=0)
             reg = self._regularizer(self.beta_fixed, beta_denovo, self.regularizer)
 
-        with pyro.plate("contexts2", 96):
+        with pyro.plate("contexts2", self.contexts):
             with pyro.plate("n2", n_samples):
                 ## TODO might try to insert the alpha here
 
@@ -254,8 +255,8 @@ class PyBasilica():
 
         # Beta ----------------------------------------------------------------
         if k_denovo != 0:
-            beta_mean = dist.HalfNormal(torch.ones(k_denovo, 96)).sample()
-            with pyro.plate("contexts", 96):
+            beta_mean = dist.HalfNormal(torch.ones(k_denovo, self.contexts)).sample()
+            with pyro.plate("contexts", self.contexts):
                 with pyro.plate("k_denovo", k_denovo):
                     beta = pyro.param("beta_denovo", beta_mean, constraint=constraints.greater_than_eq(0))
                     # beta = torch.clamp(beta, 0,1)
@@ -679,8 +680,8 @@ def convergence(x, alpha: float = 0.05):
     #     if k_denovo==0:
     #         beta_denovo = None
     #     else:
-    #         #beta_mean = dist.Normal(torch.zeros(k_denovo, 96), 1).sample()
-    #         with pyro.plate("contexts", 96):            # columns
+    #         #beta_mean = dist.Normal(torch.zeros(k_denovo, self.contexts), 1).sample()
+    #         with pyro.plate("contexts", self.contexts):            # columns
     #             with pyro.plate("k_denovo", k_denovo):  # rows
     #                 beta_denovo = pyro.sample("latent_signatures", dist.HalfNormal(1))
     #         beta_denovo = beta_denovo / (torch.sum(beta_denovo, 1).unsqueeze(-1))   # normalize
@@ -697,7 +698,7 @@ def convergence(x, alpha: float = 0.05):
     #         beta = torch.cat((self.beta_fixed, beta_denovo), axis=0)
     #         reg = self._regularizer(self.beta_fixed, beta_denovo)
 
-    #     with pyro.plate("contexts2", 96):
+    #     with pyro.plate("contexts2", self.contexts):
     #         with pyro.plate("n2", n_samples):
     #             lk =  dist.Poisson(torch.matmul(torch.matmul(torch.diag(torch.sum(self.x, axis=1)), alpha), beta)).log_prob(self.x)
     #             pyro.factor("loss", lk - reg)
@@ -718,8 +719,8 @@ def convergence(x, alpha: float = 0.05):
     #             pyro.sample("latent_exposure", dist.Delta(alpha))
 
     #     if k_denovo != 0:
-    #         beta_mean = dist.HalfNormal(torch.ones(k_denovo, 96)).sample()
-    #         with pyro.plate("contexts", 96):
+    #         beta_mean = dist.HalfNormal(torch.ones(k_denovo, self.contexts)).sample()
+    #         with pyro.plate("contexts", self.contexts):
     #             with pyro.plate("k_denovo", k_denovo):
     #                 beta = pyro.param("beta_denovo", beta_mean, constraint=constraints.greater_than_eq(0))
     #                 pyro.sample("latent_signatures", dist.Delta(beta))
