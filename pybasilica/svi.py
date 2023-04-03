@@ -19,25 +19,25 @@ from statsmodels.tsa.stattools import kpss
 class PyBasilica():
 
     def __init__(
-        self, 
-        x, 
-        k_denovo, 
-        lr, 
-        n_steps, 
+        self,
+        x,
+        k_denovo,
+        lr,
+        n_steps,
         enumer=False, # if True, will enumerate the Z
         cluster=None,
         alpha_var=1,
-        groups=None, 
-        beta_fixed=None, 
-        compile_model = True, 
-        CUDA = False, 
+        groups=None,
+        beta_fixed=None,
+        compile_model = True,
+        CUDA = False,
         enforce_sparsity = False,
         store_parameters = False,
         regularizer = "cosine",
         reg_weight = 1,
         reg_bic = False
         ):
-        
+
         self._set_data_catalogue(x)
         self._set_beta_fixed(beta_fixed)
         #self.k_denovo = int(k_denovo)
@@ -47,7 +47,7 @@ class PyBasilica():
         self.alpha_var = alpha_var
         self.lr = lr
         self.n_steps = int(n_steps)
-        self.compile_model = compile_model  
+        self.compile_model = compile_model
         self.CUDA = CUDA
         self.enforce_sparsity = enforce_sparsity
         self.regularizer = regularizer
@@ -80,7 +80,7 @@ class PyBasilica():
                 self.k_fixed = 0
             else:
                 raise Exception("Invalid fixed signatures catalogue, expected DataFrame!")
-    
+
     def _set_k_denovo(self, k_denovo):
         if isinstance(k_denovo, int):
             self.k_denovo = k_denovo
@@ -101,8 +101,8 @@ class PyBasilica():
     def _check_args(self):
         if self.k_denovo==0 and self.k_fixed==0:
             raise Exception("No. of denovo and fixed signatures could NOT be zero at the same time!")
-    
-    
+
+
     def model(self):
 
         n_samples = self.n_samples
@@ -152,7 +152,7 @@ class PyBasilica():
                         alpha = pyro.sample("latent_exposure", dist.Exponential(3))
                     else:
                         alpha = pyro.sample("latent_exposure", dist.HalfNormal(alpha_var))
-        
+
         alpha = alpha / (torch.sum(alpha, 1).unsqueeze(-1))     # normalize
         alpha = torch.clamp(alpha, 0,1)
 
@@ -178,7 +178,7 @@ class PyBasilica():
         else:
             beta = torch.cat((self.beta_fixed, beta_denovo), axis=0)
             reg = self._regularizer(self.beta_fixed, beta_denovo, self.regularizer)
-        
+
         with pyro.plate("contexts2", 96):
             with pyro.plate("n2", n_samples):
                 ## TODO might try to insert the alpha here
@@ -206,11 +206,11 @@ class PyBasilica():
 
             alpha_tissues = pyro.param("alpha_t_param", dist.HalfNormal(torch.ones(cluster, k_fixed + k_denovo) * torch.tensor(alpha_var)).sample(),
                                        constraint=constraints.greater_than_eq(0))
-            
+
             with pyro.plate("k1", k_fixed+k_denovo):
                 with pyro.plate("g", cluster):
                     pyro.sample("alpha_t", dist.Delta(alpha_tissues))
-            
+
             if enumer == False:
                 z_par = pyro.param("latent_class_p", lambda: self.z_prior)
 
@@ -229,7 +229,7 @@ class PyBasilica():
             # alpha_tissues = dist.HalfNormal(torch.ones(n_groups, k_fixed + k_denovo)).sample()
             alpha_tissues = pyro.param("alpha_t_param", dist.HalfNormal(torch.ones(n_groups, k_fixed + k_denovo)).sample(),
                                        constraint=constraints.greater_than_eq(0))
-            
+
             with pyro.plate("k1", k_fixed+k_denovo):
                 with pyro.plate("g", n_groups):
                     pyro.sample("alpha_t", dist.Delta(alpha_tissues))
@@ -240,7 +240,7 @@ class PyBasilica():
                     pyro.sample("latent_exposure", dist.Delta(alpha))
         else:
             alpha_mean = dist.HalfNormal(torch.ones(n_samples, k_fixed + k_denovo)).sample()
-    
+
             with pyro.plate("k", k_fixed + k_denovo):
                 with pyro.plate("n", n_samples):
                     alpha = pyro.param("alpha", alpha_mean, constraint=constraints.greater_than_eq(0))
@@ -261,7 +261,7 @@ class PyBasilica():
                     # beta = torch.clamp(beta, 0,1)
                     pyro.sample("latent_signatures", dist.Delta(beta))
 
-    
+
     def _regularizer(self, beta_fixed, beta_denovo, reg_type = "cosine"):
         '''
         if beta_denovo == None:
@@ -278,6 +278,9 @@ class PyBasilica():
                         dd += F.kl_div(denovo1, denovo2, reduction="batchmean").item()
         '''
         loss = 0
+
+        if beta_denovo is None:
+          return loss
 
         if reg_type == "cosine":
           for fixed in beta_fixed:
@@ -303,7 +306,7 @@ class PyBasilica():
 
 
     def _likelihood(self, M, alpha, beta_fixed, beta_denovo):
-        
+
         # if beta_fixed is None:
         #     beta = beta_denovo
         # elif beta_denovo is None:
@@ -383,7 +386,7 @@ class PyBasilica():
             losses.append(loss)
             t.set_description('ELBO: {:.5f}  '.format(loss))
             t.refresh()
-        ''' 
+        '''
         if self.CUDA and torch.cuda.is_available():
           self.x = self.x.cpu()
           if self.beta_fixed is not None:
@@ -410,7 +413,7 @@ class PyBasilica():
             try:
                 par = par.clone().detach()
             finally:
-                if normalize: 
+                if normalize:
                     par = par / (torch.sum(par, 1).unsqueeze(-1))
         except:
             return None
@@ -421,15 +424,15 @@ class PyBasilica():
     def _set_alpha(self):
         self.alpha = self._get_param("alpha", normalize=True)
         self.alpha_unn = self._get_param("alpha", normalize=False)
-        try: 
+        try:
             self.alpha_prior = self._get_param("alpha_t_param", normalize=True)
             self.alpha_prior_unn = self._get_param("alpha_t_param", normalize=False)
-        except: 
+        except:
             self.alpha_prior = None
             self.alpha_prior_unn = None
         # exposure matrix
         # alpha = pyro.param("alpha")
-        # try: alpha_prior = pyro.param("alpha_t_param") 
+        # try: alpha_prior = pyro.param("alpha_t_param")
         # except: alpha_prior = None
 
         # if self.CUDA and torch.cuda.is_available():
@@ -467,7 +470,7 @@ class PyBasilica():
     def _set_clusters(self):
         if self.cluster is None:
             return
-        
+
         # pi = pyro.param("pi_param")
         # print(pi)
 
@@ -489,12 +492,12 @@ class PyBasilica():
         Returns `m + log( sum( exp( weighted_lp - m ) ) )`
         - `m` is the the maximum value of weighted_lp for each observation among the K values
         - `torch.exp(weighted_lp - m)` to perform some sort of normalization
-        In this way the `exp` for the maximum value will be exp(0)=1, while for the 
+        In this way the `exp` for the maximum value will be exp(0)=1, while for the
         others will be lower than 1, thus the sum across the K components will sum up to 1.
         '''
         m = torch.amax(weighted_lp, dim=0)  # the maximum value for each observation among the K values
         summed_lk = m + torch.log(torch.sum(torch.exp(weighted_lp - m), axis=0))
-        return summed_lk 
+        return summed_lk
 
 
     def get_param_dict(self):
@@ -517,10 +520,10 @@ class PyBasilica():
         n_samples = self.n_samples
 
         try:
-            beta = torch.cat((torch.tensor(params["beta_f"]), torch.tensor(params["beta_d"])), axis=0) 
+            beta = torch.cat((torch.tensor(params["beta_f"]), torch.tensor(params["beta_d"])), axis=0)
         except:
             beta = torch.tensor(params["beta_d"])
-        
+
         z = torch.zeros(n_samples)
 
         for n in range(n_samples):
@@ -534,7 +537,7 @@ class PyBasilica():
                     beta.float() )
 
                 # compute weighted log probability
-                ll_nk[k,:] = torch.log(params["pi"][k]) + pyro.distributions.Poisson( rate ).log_prob(m_n) 
+                ll_nk[k,:] = torch.log(params["pi"][k]) + pyro.distributions.Poisson( rate ).log_prob(m_n)
 
             ll_nk_sum = ll_nk.sum(axis=1)  # sum over the contexts -> reaches a tensor of shape (n_clusters)
 
@@ -614,12 +617,12 @@ Kwiatkowski-Phillips-Schmidt-Shin test for stationarity
 both return tuples where 2nd value is P-value
 '''
 
-	
+
 import warnings
 warnings.filterwarnings('ignore')
 
 def is_stationary(data: pd.Series, alpha: float = 0.05):
-  
+
     # Test to see if the time series is already stationary
     if kpss(data, regression='c', nlags="auto")[1] > alpha:
     #if adfuller(data)[1] < alpha:
@@ -668,7 +671,7 @@ def convergence(x, alpha: float = 0.05):
     #                     alpha = pyro.sample("latent_exposure", dist.Exponential(3))
     #                 else:
     #                     alpha = pyro.sample("latent_exposure", dist.HalfNormal(1))
-        
+
     #     alpha = alpha / (torch.sum(alpha, 1).unsqueeze(-1))     # normalize
     #     alpha = torch.clamp(alpha, 0,1)
 
@@ -693,12 +696,12 @@ def convergence(x, alpha: float = 0.05):
     #     else:
     #         beta = torch.cat((self.beta_fixed, beta_denovo), axis=0)
     #         reg = self._regularizer(self.beta_fixed, beta_denovo)
-        
+
     #     with pyro.plate("contexts2", 96):
     #         with pyro.plate("n2", n_samples):
     #             lk =  dist.Poisson(torch.matmul(torch.matmul(torch.diag(torch.sum(self.x, axis=1)), alpha), beta)).log_prob(self.x)
     #             pyro.factor("loss", lk - reg)
-    
+
 
     # def guide(self):
 
