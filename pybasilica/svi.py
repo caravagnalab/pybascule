@@ -36,7 +36,8 @@ class PyBasilica():
         regularizer = "cosine",
         reg_weight = 1,
         reg_bic = False, 
-        stage = "one"
+        stage = "one", 
+        #alpha0 = None
         ):
 
         self._set_data_catalogue(x)
@@ -59,6 +60,7 @@ class PyBasilica():
 
         self.store_parameters = store_parameters
         self.stage = stage
+        #self.alpha0 = alpha0
 
         if not enumer and cluster != None:
             self.z_prior = torch.multinomial(torch.ones(cluster), self.n_samples, replacement=True).float()
@@ -104,6 +106,9 @@ class PyBasilica():
     def _check_args(self):
         if self.k_denovo==0 and self.k_fixed==0:
             raise Exception("No. of denovo and fixed signatures could NOT be zero at the same time!")
+        #if self.stage=="two":
+        #    if self.alpha0 == None:
+        #        raise Exception("stage two needs first stage exposure!")
 
 
     def model(self):
@@ -159,9 +164,12 @@ class PyBasilica():
         alpha = alpha / (torch.sum(alpha, 1).unsqueeze(-1))     # normalize
         alpha = torch.clamp(alpha, 0,1)
 
-
-
-        #alpha = alpha * ((torch.ones(alpha.shape[0]) - alpha1.sum)/alpha1.sum)
+        '''
+        if self.stage=="two":
+            dd = torch.tensor(self.alpha0.values).float()
+            cc = torch.sum(dd, 1).unsqueeze(-1)
+            alpha = alpha * ((torch.ones(alpha.shape[0]) - self.alpha0.sum) / self.alpha0.sum)
+        '''
 
         #----------------------------- [EPSILON] ----------------------------------
         if self.stage=="one":
