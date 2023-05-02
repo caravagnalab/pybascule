@@ -35,7 +35,8 @@ class PyBasilica():
         store_parameters = False,
         regularizer = "cosine",
         reg_weight = 1,
-        reg_bic = False
+        reg_bic = False, 
+        stage = "one"
         ):
 
         self._set_data_catalogue(x)
@@ -57,6 +58,7 @@ class PyBasilica():
         self._check_args()
 
         self.store_parameters = store_parameters
+        self.stage = stage
 
         if not enumer and cluster != None:
             self.z_prior = torch.multinomial(torch.ones(cluster), self.n_samples, replacement=True).float()
@@ -157,6 +159,19 @@ class PyBasilica():
         alpha = alpha / (torch.sum(alpha, 1).unsqueeze(-1))     # normalize
         alpha = torch.clamp(alpha, 0,1)
 
+
+
+        #alpha = alpha * ((torch.ones(alpha.shape[0]) - alpha1.sum)/alpha1.sum)
+
+        #----------------------------- [EPSILON] ----------------------------------
+        if self.stage=="one":
+            _lambda = 10
+            with pyro.plate("contexts3", self.contexts):  # columns
+                    with pyro.plate("n3", n_samples):     # rows
+                        epsilon = pyro.sample("latent_m", dist.HalfNormal(_lambda))
+        else:
+            epsilon = None
+
         #----------------------------- [BETA] -------------------------------------
         if k_denovo==0:
             beta_denovo = None
@@ -184,7 +199,13 @@ class PyBasilica():
             with pyro.plate("n2", n_samples):
                 ## TODO might try to insert the alpha here
 
-                lk =  dist.Poisson(torch.matmul(torch.matmul(torch.diag(torch.sum(self.x, axis=1)), alpha), beta)).log_prob(self.x)
+                a = torch.matmul(torch.matmul(torch.diag(torch.sum(self.x, axis=1)), alpha), beta)
+                
+                if self.stage=="one":
+                    xx = a + epsilon
+                    lk =  dist.Poisson(xx).log_prob(self.x)
+                else:
+                    lk =  dist.Poisson(a).log_prob(self.x)
                 # pyro.factor("loss", lk + self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1]))
                 pyro.factor("loss", lk.sum() + self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1]))
 
@@ -253,6 +274,15 @@ class PyBasilica():
         #         alpha = torch.clamp(alpha, 0,1)
         #         pyro.sample("latent_exposure", dist.Delta(alpha))
 
+        # EPSILON -------------------------------------------------------------
+        if self.stage == "one":
+            lambda_mean = dist.Poisson(torch.ones(n_samples, self.contexts)).sample()
+
+            with pyro.plate("contexts3", self.contexts):
+                with pyro.plate("n3", n_samples):
+                    epsilon = pyro.param("epsilon", lambda_mean, constraint=constraints.greater_than_eq(0))
+                    pyro.sample("latent_m", dist.Delta(epsilon))
+
         # Beta ----------------------------------------------------------------
         if k_denovo != 0:
             beta_mean = dist.HalfNormal(torch.ones(k_denovo, self.contexts)).sample()
@@ -306,7 +336,7 @@ class PyBasilica():
         return beta
 
 
-    def _likelihood(self, M, alpha, beta_fixed, beta_denovo):
+    def _likelihood(self, M, alpha, beta_fixed, beta_denovo, epsilon=None):
 
         # if beta_fixed is None:
         #     beta = beta_denovo
@@ -317,7 +347,12 @@ class PyBasilica():
 
         beta = self._get_unique_beta(beta_fixed, beta_denovo)
 
-        _log_like_matrix = dist.Poisson(torch.matmul(torch.matmul(torch.diag(torch.sum(M, axis=1)), alpha), beta)).log_prob(M)
+        a = torch.matmul(torch.matmul(torch.diag(torch.sum(M, axis=1)), alpha), beta)
+        if epsilon==None:
+            _log_like_matrix = dist.Poisson(a).log_prob(M)
+        else:
+            xx = a + epsilon
+            _log_like_matrix = dist.Poisson(xx).log_prob(M)
         _log_like_sum = torch.sum(_log_like_matrix)
         _log_like = float("{:.3f}".format(_log_like_sum.item()))
 
@@ -359,6 +394,11 @@ class PyBasilica():
             # alpha = torch.exp(alpha)
             alpha = alpha / (torch.sum(alpha, 1).unsqueeze(-1))
 
+            if self.stage=="one":
+                epsilon = pyro.param("epsilon").clone().detach()
+            else:
+                epsilon=None
+
             if self.k_denovo == 0:
                 beta_denovo = None
             else:
@@ -366,7 +406,7 @@ class PyBasilica():
                 #beta_denovo = torch.exp(beta_denovo)
                 beta_denovo = beta_denovo / (torch.sum(beta_denovo, 1).unsqueeze(-1))
 
-            likelihoods.append(self._likelihood(self.x, alpha, self.beta_fixed, beta_denovo))
+            likelihoods.append(self._likelihood(self.x, alpha, self.beta_fixed, beta_denovo, epsilon))
             # --------------------------------------------------------------------------------
             # convergence test ---------------------------------------------------------------
             r = 50
@@ -398,9 +438,10 @@ class PyBasilica():
         self.likelihoods = likelihoods
         self._set_alpha()
         self._set_beta_denovo()
+        self._set_epsilon()
         self._set_clusters()
         self._set_bic()
-        self.likelihood = self._likelihood(self.x, self.alpha, self.beta_fixed, self.beta_denovo)
+        self.likelihood = self._likelihood(self.x, self.alpha, self.beta_fixed, self.beta_denovo, self.epsilon)
         # self.regularization = self._regularizer(self.beta_fixed, self.beta_denovo)
 
     def _get_param(self, param_name, normalize=False):
@@ -467,6 +508,12 @@ class PyBasilica():
             # #beta_denovo = torch.exp(beta_denovo)
             # self.beta_denovo = beta_denovo / (torch.sum(beta_denovo, 1).unsqueeze(-1))
 
+    def _set_epsilon(self):
+        if self.stage=="one":
+            self.epsilon = self._get_param("epsilon", normalize=False)
+        else:
+            self.epsilon = None
+
 
     def _set_clusters(self):
         if self.cluster is None:
@@ -510,6 +557,12 @@ class PyBasilica():
         params["beta_f"] = self.beta_fixed
 
         params["pi"] = self._get_param("pi", normalize=False)
+
+        if self.stage=="one":
+            params["epsilon"] = self._get_param("epsilon", normalize=False)
+        else:
+            params["epsilon"] = None
+
 
         return params
 
@@ -556,7 +609,7 @@ class PyBasilica():
         M = self.x
         alpha = self.alpha
 
-        _log_like = self._likelihood(M, alpha, self.beta_fixed, self.beta_denovo)
+        _log_like = self._likelihood(M, alpha, self.beta_fixed, self.beta_denovo, self.epsilon)
 
         ## adding regularizer
         if self.reg_bic:
@@ -592,6 +645,12 @@ class PyBasilica():
 
         # alpha
         self.alpha = pd.DataFrame(np.array(self.alpha), index=sample_names , columns=fixed_names + denovo_names)
+
+        # epsilon
+        if self.stage=="one":
+            self.epsilon = pd.DataFrame(np.array(self.epsilon), index=sample_names , columns=mutation_features)
+        else:
+            self.epsilon = None
 
 
     def _mv_to_gpu(self,*cpu_tens):
