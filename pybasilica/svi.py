@@ -36,7 +36,7 @@ class PyBasilica():
         regularizer = "cosine",
         reg_weight = 1,
         reg_bic = False, 
-        stage = "one", 
+        stage = "random_noise", 
         #alpha0 = None
         ):
 
@@ -172,7 +172,7 @@ class PyBasilica():
         '''
 
         #----------------------------- [EPSILON] ----------------------------------
-        if self.stage=="one":
+        if self.stage == "random_noise":
             _lambda = 10
             with pyro.plate("contexts3", self.contexts):  # columns
                     with pyro.plate("n3", n_samples):     # rows
@@ -209,7 +209,7 @@ class PyBasilica():
 
                 a = torch.matmul(torch.matmul(torch.diag(torch.sum(self.x, axis=1)), alpha), beta)
                 
-                if self.stage=="one":
+                if self.stage=="random_noise":
                     xx = a + epsilon
                     lk =  dist.Poisson(xx).log_prob(self.x)
                 else:
@@ -283,13 +283,12 @@ class PyBasilica():
         #         pyro.sample("latent_exposure", dist.Delta(alpha))
 
         # EPSILON -------------------------------------------------------------
-        if self.stage == "one":
-            lambda_mean = dist.Poisson(torch.ones(n_samples, self.contexts)).sample()
+        if self.stage == "random_noise":
 
             with pyro.plate("contexts3", self.contexts):
                 with pyro.plate("n3", n_samples):
-                    epsilon = pyro.param("epsilon", lambda_mean, constraint=constraints.greater_than_eq(0))
-                    pyro.sample("latent_m", dist.Delta(epsilon))
+                    eps_var = pyro.param("lambda_epsilon", lambda: torch.ones(n_samples, self.contexts), constraint=constraints.greater_than_eq(0))
+                    pyro.sample("latent_m", dist.HalfNormal(eps_var))
 
         # Beta ----------------------------------------------------------------
         if k_denovo != 0:
@@ -344,7 +343,7 @@ class PyBasilica():
         return beta
 
 
-    def _likelihood(self, M, alpha, beta_fixed, beta_denovo, epsilon=None):
+    def _likelihood(self, M, alpha, beta_fixed, beta_denovo, eps_var=None):
 
         # if beta_fixed is None:
         #     beta = beta_denovo
@@ -356,11 +355,12 @@ class PyBasilica():
         beta = self._get_unique_beta(beta_fixed, beta_denovo)
 
         a = torch.matmul(torch.matmul(torch.diag(torch.sum(M, axis=1)), alpha), beta)
-        if epsilon==None:
+        if eps_var==None:
             _log_like_matrix = dist.Poisson(a).log_prob(M)
         else:
-            xx = a + epsilon
+            xx = a + dist.HalfNormal(eps_var).sample()
             _log_like_matrix = dist.Poisson(xx).log_prob(M)
+
         _log_like_sum = torch.sum(_log_like_matrix)
         _log_like = float("{:.3f}".format(_log_like_sum.item()))
 
@@ -402,10 +402,10 @@ class PyBasilica():
             # alpha = torch.exp(alpha)
             alpha = alpha / (torch.sum(alpha, 1).unsqueeze(-1))
 
-            if self.stage=="one":
-                epsilon = pyro.param("epsilon").clone().detach()
+            if self.stage=="random_noise":
+                eps_var = pyro.param("lambda_epsilon").clone().detach()
             else:
-                epsilon=None
+                eps_var = None
 
             if self.k_denovo == 0:
                 beta_denovo = None
@@ -414,7 +414,7 @@ class PyBasilica():
                 #beta_denovo = torch.exp(beta_denovo)
                 beta_denovo = beta_denovo / (torch.sum(beta_denovo, 1).unsqueeze(-1))
 
-            likelihoods.append(self._likelihood(self.x, alpha, self.beta_fixed, beta_denovo, epsilon))
+            likelihoods.append(self._likelihood(self.x, alpha, self.beta_fixed, beta_denovo, eps_var))
             # --------------------------------------------------------------------------------
             # convergence test ---------------------------------------------------------------
             r = 50
@@ -449,7 +449,7 @@ class PyBasilica():
         self._set_epsilon()
         self._set_clusters()
         self._set_bic()
-        self.likelihood = self._likelihood(self.x, self.alpha, self.beta_fixed, self.beta_denovo, self.epsilon)
+        self.likelihood = self._likelihood(self.x, self.alpha, self.beta_fixed, self.beta_denovo, self.eps_var)
         # self.regularization = self._regularizer(self.beta_fixed, self.beta_denovo)
 
     def _get_param(self, param_name, normalize=False):
@@ -517,10 +517,10 @@ class PyBasilica():
             # self.beta_denovo = beta_denovo / (torch.sum(beta_denovo, 1).unsqueeze(-1))
 
     def _set_epsilon(self):
-        if self.stage=="one":
-            self.epsilon = self._get_param("epsilon", normalize=False)
+        if self.stage=="random_noise":
+            self.eps_var = self._get_param("lambda_epsilon", normalize=False)
         else:
-            self.epsilon = None
+            self.eps_var = None
 
 
     def _set_clusters(self):
@@ -566,10 +566,10 @@ class PyBasilica():
 
         params["pi"] = self._get_param("pi", normalize=False)
 
-        if self.stage=="one":
-            params["epsilon"] = self._get_param("epsilon", normalize=False)
+        if self.stage=="random_noise":
+            params["lambda_epsilon"] = self._get_param("lambda_epsilon", normalize=False)
         else:
-            params["epsilon"] = None
+            params["lambda_epsilon"] = None
 
 
         return params
@@ -617,7 +617,7 @@ class PyBasilica():
         M = self.x
         alpha = self.alpha
 
-        _log_like = self._likelihood(M, alpha, self.beta_fixed, self.beta_denovo, self.epsilon)
+        _log_like = self._likelihood(M, alpha, self.beta_fixed, self.beta_denovo, self.eps_var)
 
         ## adding regularizer
         if self.reg_bic:
@@ -654,11 +654,11 @@ class PyBasilica():
         # alpha
         self.alpha = pd.DataFrame(np.array(self.alpha), index=sample_names , columns=fixed_names + denovo_names)
 
-        # epsilon
-        if self.stage=="one":
-            self.epsilon = pd.DataFrame(np.array(self.epsilon), index=sample_names , columns=mutation_features)
+        # epsilon variance
+        if self.stage=="random_noise":
+            self.eps_var = pd.DataFrame(np.array(self.eps_var), index=sample_names , columns=mutation_features)
         else:
-            self.epsilon = None
+            self.eps_var = None
 
 
     def _mv_to_gpu(self,*cpu_tens):

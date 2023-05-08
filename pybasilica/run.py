@@ -7,11 +7,11 @@ from rich.progress import Progress, BarColumn, TextColumn, TaskProgressColumn, T
 from rich.live import Live
 from rich.table import Table
 
-#from pybasilica.svi import PyBasilica
+# from pybasilica.svi import PyBasilica
 from svi import PyBasilica
 
 def single_run(x, k_denovo, lr=0.05, n_steps=500, enumer=False, cluster=None, groups=None, beta_fixed=None, compile_model = False, \
-               CUDA = False, enforce_sparsity = False, regularizer = "cosine", reg_weight = 1, reg_bic = False, store_parameters=False, stage = "one"):
+               CUDA = False, enforce_sparsity = False, regularizer = "cosine", reg_weight = 1, reg_bic = False, store_parameters=False, stage = "random_noise"):
     
     obj = PyBasilica(x, k_denovo, lr, n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed, compile_model = compile_model, \
                      CUDA = CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, reg_weight = reg_weight, reg_bic = reg_bic, store_parameters=store_parameters, stage = stage)
