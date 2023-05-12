@@ -38,6 +38,7 @@ class PyBasilica():
         reg_weight = 1,
         reg_bic = False, 
         stage = "random_noise", 
+        regul_compare = None
         #alpha0 = None
         ):
 
@@ -68,6 +69,7 @@ class PyBasilica():
         #self.alpha0 = alpha0
 
         self._fix_zero_denovo_null_reference()
+        self._set_external_catalogue(regul_compare)
 
         if not enumer and cluster != None:
             self.z_prior = torch.multinomial(torch.ones(cluster), self.n_samples, replacement=True).float()
@@ -77,7 +79,6 @@ class PyBasilica():
         if self.k_denovo == 0 and self.k_fixed == 0:
             self.stage = "random_noise"
             self.beta_fixed = torch.zeros(1, self.contexts)
-            print(self.beta_fixed.shape)
             self.k_fixed = 1
 
 
@@ -100,6 +101,15 @@ class PyBasilica():
                 self.k_fixed = 0
             else:
                 raise Exception("Invalid fixed signatures catalogue, expected DataFrame!")
+
+    def _set_external_catalogue(self, regul_compare):
+        try:
+            self.regul_compare = torch.tensor(regul_compare.values).float()
+        except:
+            if regul_compare is None:
+                self.regul_compare = None
+            else:
+                raise Exception("Invalid external signatures catalogue, expected DataFrame!")
 
 
     def _set_k_denovo(self, k_denovo):
@@ -355,6 +365,9 @@ class PyBasilica():
                         dd += F.kl_div(denovo1, denovo2, reduction="batchmean").item()
         '''
         loss = 0
+
+        if self.regul_compare is not None:
+            beta_fixed = self.regul_compare
 
         if beta_fixed is None or torch.sum(beta_fixed) == 0:
             return loss
