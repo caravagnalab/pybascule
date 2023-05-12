@@ -44,7 +44,6 @@ class PyBasilica():
         self._set_data_catalogue(x)
         self._set_beta_fixed(beta_fixed)
         self._set_k_denovo(k_denovo)
-        self._fix_zero_denovo_null_reference()
 
         self.enumer = enumer
         self.cluster = cluster
@@ -67,6 +66,8 @@ class PyBasilica():
         self.store_parameters = store_parameters
         self.stage = stage
         #self.alpha0 = alpha0
+
+        self._fix_zero_denovo_null_reference()
 
         if not enumer and cluster != None:
             self.z_prior = torch.multinomial(torch.ones(cluster), self.n_samples, replacement=True).float()
@@ -469,7 +470,6 @@ class PyBasilica():
             # --------------------------------------------------------------------------------
             # convergence test ---------------------------------------------------------------
             r = 50
-            print(loss)
             if len(losses) >= r:
                 if len(losses)%r==0:
                     #print(convergence(x=losses[-r:], alpha=0.05))
