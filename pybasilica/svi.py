@@ -193,7 +193,7 @@ class PyBasilica():
 
                 if torch.sum(alpha) > 0:
                     alpha = alpha / (torch.sum(alpha, 1).unsqueeze(-1))     # normalize
-                    alpha = torch.clamp(alpha, 0,1)
+                    alpha = torch.clamp(alpha, 0, 1)
 
         '''
         if self.stage=="two":
