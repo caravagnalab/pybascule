@@ -80,6 +80,9 @@ class PyBasilica():
             self.stage = "random_noise"
             self.beta_fixed = torch.zeros(1, self.contexts)
             self.k_fixed = 1
+            self._noise_only = True
+        else:
+            self._noise_only = False
 
 
     def _set_data_catalogue(self, x):
@@ -101,6 +104,17 @@ class PyBasilica():
                 self.k_fixed = 0
             else:
                 raise Exception("Invalid fixed signatures catalogue, expected DataFrame!")
+        
+        if self.k_fixed > 0:
+            self._fix_zero_contexts()
+
+    def _fix_zero_contexts(self):
+        zero_contexts = torch.sum(self.beta_fixed, axis=0)
+        if torch.any(zero_contexts == 0):
+            # self.stage = "random_noise"
+            random_sig = torch.randint(1, self.k_fixed, (int(torch.sum(zero_contexts)),))
+            self.beta_fixed[random_sig, zero_contexts] = 1e-07
+
 
     def _set_external_catalogue(self, regul_compare):
         try:
@@ -149,6 +163,10 @@ class PyBasilica():
         alpha_var = self.alpha_var
         exp_rate = self.exp_rate
 
+        print(k_denovo)
+        print(k_fixed)
+        print(self.stage)
+
         #----------------------------- [ALPHA] -------------------------------------
         if cluster != None:
             pi = pyro.sample("pi", dist.Dirichlet(torch.ones(cluster) / cluster))
@@ -169,18 +187,24 @@ class PyBasilica():
             n_groups = len(set(groups))
             # alpha_tissues = dist.HalfNormal(torch.ones(n_groups, k_fixed + k_denovo)).sample()
 
-            with pyro.plate("k1", k_fixed+k_denovo):
-                with pyro.plate("g", n_groups):
-                    alpha_tissues = pyro.sample("alpha_t", dist.HalfNormal(alpha_var))
+            # if self.beta_fixed is not None and torch.sum(self.beta_fixed) == 0 and self.k_denovo == 0:
+            if self._noise_only:
+                alpha = torch.zeros(n_samples, 1)
+            else:
+                with pyro.plate("k1", k_fixed+k_denovo):
+                    with pyro.plate("g", n_groups):
+                        alpha_tissues = pyro.sample("alpha_t", dist.HalfNormal(alpha_var))
 
-            # sample from the alpha prior
-            with pyro.plate("k", k_fixed + k_denovo):   # columns
-                with pyro.plate("n", n_samples):        # rows
-                    alpha = pyro.sample("latent_exposure", dist.Normal(alpha_tissues[groups,:], alpha_var))
-                    # alpha = pyro.sample("latent_exposure", dist.Normal(alpha_t_resh, 1))
+                # sample from the alpha prior
+                with pyro.plate("k", k_fixed + k_denovo):   # columns
+                    with pyro.plate("n", n_samples):        # rows
+                        alpha = pyro.sample("latent_exposure", dist.Normal(alpha_tissues[groups,:], alpha_var))
+                        # alpha = pyro.sample("latent_exposure", dist.Normal(alpha_t_resh, 1))
 
         else:
-            if self.beta_fixed is not None and torch.sum(self.beta_fixed) == 0 and self.k_denovo == 0:
+            # if self.beta_fixed is not None and torch.sum(self.beta_fixed) == 0 and self.k_denovo == 0:
+            if self._noise_only:
+                print("ZERO EXPOSURES")
                 alpha = torch.zeros(n_samples, 1)
             else:
                 with pyro.plate("k", k_fixed + k_denovo):   # columns
@@ -288,23 +312,26 @@ class PyBasilica():
                 alpha = pyro.sample("latent_exposure", dist.Delta(alpha_p).to_event(1))
 
         elif groups != None:
-            n_groups = len(set(groups))
-            # alpha_tissues = dist.HalfNormal(torch.ones(n_groups, k_fixed + k_denovo)).sample()
-            alpha_tissues = pyro.param("alpha_t_param", dist.HalfNormal(torch.ones(n_groups, k_fixed + k_denovo)).sample(),
-                                       constraint=constraints.greater_than_eq(0))
+            # if (self.k_denovo > 0 or (self.beta_fixed is not None and torch.sum(self.beta_fixed) > 0)):
+            if not self._noise_only:
+                n_groups = len(set(groups))
+                # alpha_tissues = dist.HalfNormal(torch.ones(n_groups, k_fixed + k_denovo)).sample()
+                alpha_tissues = pyro.param("alpha_t_param", dist.HalfNormal(torch.ones(n_groups, k_fixed + k_denovo)).sample(),
+                                        constraint=constraints.greater_than_eq(0))
 
-            with pyro.plate("k1", k_fixed+k_denovo):
-                with pyro.plate("g", n_groups):
-                    pyro.sample("alpha_t", dist.Delta(alpha_tissues))
+                with pyro.plate("k1", k_fixed+k_denovo):
+                    with pyro.plate("g", n_groups):
+                        pyro.sample("alpha_t", dist.Delta(alpha_tissues))
 
-            with pyro.plate("k", k_fixed + k_denovo):   # columns
-                with pyro.plate("n", n_samples):        # rows
-                    alpha = pyro.param("alpha", alpha_tissues[groups, :], constraint=constraints.greater_than_eq(0))
-                    pyro.sample("latent_exposure", dist.Delta(alpha))
+                with pyro.plate("k", k_fixed + k_denovo):   # columns
+                    with pyro.plate("n", n_samples):        # rows
+                        alpha = pyro.param("alpha", alpha_tissues[groups, :], constraint=constraints.greater_than_eq(0))
+                        pyro.sample("latent_exposure", dist.Delta(alpha))
 
         # no groups
         else:
-            if (self.k_denovo > 0 or (self.beta_fixed is not None and torch.sum(self.beta_fixed) > 0)):
+            # if (self.k_denovo > 0 or (self.beta_fixed is not None and torch.sum(self.beta_fixed) > 0)):
+            if not self._noise_only:
                 if self.enforce_sparsity:
                     # alpha_mean = dist.Beta(torch.ones(n_samples, k_fixed + k_denovo) * self.beta_alpha, \
                     #                        torch.ones(n_samples, k_fixed + k_denovo) * self.beta_beta).sample()
@@ -345,7 +372,7 @@ class PyBasilica():
             with pyro.plate("contexts", self.contexts):
                 with pyro.plate("k_denovo", k_denovo):
                     beta = pyro.param("beta_denovo", beta_mean, constraint=constraints.greater_than_eq(1e-07))
-                    # beta = torch.clamp(beta, 0,1)
+                    beta = torch.clamp(beta, 0, 1)
                     pyro.sample("latent_signatures", dist.Delta(beta))
 
 
@@ -369,7 +396,7 @@ class PyBasilica():
         if self.regul_compare is not None:
             beta_fixed = self.regul_compare
 
-        if beta_fixed is None or torch.sum(beta_fixed) == 0:
+        if beta_fixed is None or self._noise_only:
             return loss
 
         if beta_denovo is None:
@@ -378,13 +405,13 @@ class PyBasilica():
         beta_fixed[beta_fixed==0] = 1e-07
 
         if reg_type == "cosine":
-          for fixed in beta_fixed:
-            for denovo in beta_denovo:
-              loss +=  torch.log((1 - F.cosine_similarity(fixed, denovo, dim = -1)))
+            for fixed in beta_fixed:
+                for denovo in beta_denovo:
+                    loss +=  torch.log((1 - F.cosine_similarity(fixed, denovo, dim = -1)))
         else:
-          for fixed in beta_fixed:
-            for denovo in beta_denovo:
-              loss += torch.log(F.kl_div(torch.log(fixed), torch.log(denovo), log_target = True, reduction="batchmean"))
+            for fixed in beta_fixed:
+                for denovo in beta_denovo:
+                    loss += torch.log(F.kl_div(torch.log(fixed), torch.log(denovo), log_target = True, reduction="batchmean"))
 
         return loss
 
@@ -392,7 +419,7 @@ class PyBasilica():
     def _get_unique_beta(self, beta_fixed, beta_denovo):
         if beta_fixed is None:
             beta = beta_denovo
-        elif beta_denovo is None or torch.sum(beta_fixed)==0:
+        elif beta_denovo is None or self._noise_only:
             beta = beta_fixed
         else:
             beta = torch.cat((beta_fixed, beta_denovo), axis=0)
