@@ -97,6 +97,8 @@ class PyBasilica():
     def _set_beta_fixed(self, beta_fixed):
         try:
             self.beta_fixed = torch.tensor(beta_fixed.values).float()
+            if len(self.beta_fixed.shape)==1:
+                self.beta_fixed = self.beta_fixed.reshape(1, self.beta_fixed.shape[0])
             self.k_fixed = beta_fixed.shape[0]
         except:
             if beta_fixed is None:
@@ -105,18 +107,18 @@ class PyBasilica():
             else:
                 raise Exception("Invalid fixed signatures catalogue, expected DataFrame!")
         
-        # if self.k_fixed > 0:
-        #     self._fix_zero_contexts()
+        if self.k_fixed > 0:
+            self._fix_zero_contexts()
 
 
-    # def _fix_zero_contexts(self):
-    #     zero_contexts = torch.sum(self.beta_fixed, axis=0)
-    #     if torch.any(zero_contexts == 0):
-    #         # self.stage = "random_noise"
-    #         random_sig = 0 if self.k_fixed == 1 else torch.randperm(0, self.k_fixed - 1, (int(torch.sum(zero_contexts)),))
-    #         self.beta_fixed[random_sig, zero_contexts==0] = 1e-07
+    def _fix_zero_contexts(self):
+        zero_contexts = torch.sum(self.beta_fixed, axis=0)
+        if torch.any(zero_contexts == 0):
+            # self.stage = "random_noise"
+            random_sig = 0 if self.k_fixed == 1 else torch.randperm(0, self.k_fixed - 1, (int(torch.sum(zero_contexts)),))
+            self.beta_fixed[random_sig, zero_contexts==0] = 1e-07
 
-    #     self.beta_fixed = self.beta_fixed / (torch.sum(self.beta_fixed, 1).unsqueeze(-1))
+            self.beta_fixed = self.beta_fixed / (torch.sum(self.beta_fixed, 1).unsqueeze(-1))
 
 
     def _set_external_catalogue(self, regul_compare):
