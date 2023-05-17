@@ -27,7 +27,7 @@ class PyBasilica():
         enumer=False, # if True, will enumerate the Z
         cluster=None,
         alpha_var=1,
-        exp_rate=20,
+        exp_rate=3,
         groups=None,
         beta_fixed=None,
         compile_model = True,
@@ -112,11 +112,14 @@ class PyBasilica():
 
 
     def _fix_zero_contexts(self):
-        zero_contexts = torch.sum(self.beta_fixed, axis=0)
-        if torch.any(zero_contexts == 0):
+        colsums = torch.sum(self.beta_fixed, axis=0)
+        zero_contexts = torch.where(colsums==0)[0]
+        if torch.any(colsums == 0):
             # self.stage = "random_noise"
-            random_sig = 0 if self.k_fixed == 1 else torch.randperm(0, self.k_fixed - 1, (int(torch.sum(zero_contexts)),))
-            self.beta_fixed[random_sig, zero_contexts==0] = 1e-07
+            random_sig = 0 if self.k_fixed == 1 else torch.randperm(self.beta_fixed.shape[0])[:torch.numel(zero_contexts)]
+
+            for rr in random_sig:
+                self.beta_fixed[rr, zero_contexts] = 1e-07
 
             self.beta_fixed = self.beta_fixed / (torch.sum(self.beta_fixed, 1).unsqueeze(-1))
 
@@ -168,10 +171,6 @@ class PyBasilica():
         alpha_var = self.alpha_var
         exp_rate = self.exp_rate
 
-        # print(k_denovo)
-        # print(k_fixed)
-        # print(self.stage)
-
         #----------------------------- [ALPHA] -------------------------------------
         if cluster != None:
             pi = pyro.sample("pi", dist.Dirichlet(torch.ones(cluster) / cluster))
@@ -209,7 +208,6 @@ class PyBasilica():
         else:
             # if self.beta_fixed is not None and torch.sum(self.beta_fixed) == 0 and self.k_denovo == 0:
             if self._noise_only:
-                # print("ZERO EXPOSURES")
                 alpha = torch.zeros(n_samples, 1)
             else:
                 with pyro.plate("k", k_fixed + k_denovo):   # columns
@@ -220,9 +218,8 @@ class PyBasilica():
                         else:
                             alpha = pyro.sample("latent_exposure", dist.HalfNormal(alpha_var))
 
-                if torch.sum(alpha) > 0:
-                    alpha = alpha / (torch.sum(alpha, 1).unsqueeze(-1))     # normalize
-                    alpha = torch.clamp(alpha, 0, 1)
+                alpha = alpha / (torch.sum(alpha, 1).unsqueeze(-1))     # normalize
+                alpha = torch.clamp(alpha, 0, 1)
 
         '''
         if self.stage=="two":
@@ -367,17 +364,14 @@ class PyBasilica():
                 with pyro.plate("n3", n_samples):
                     # eps_var = pyro.param("lambda_epsilon", lambda: torch.ones(n_samples, self.contexts) * 10, constraint=constraints.positive)
                     aa = pyro.sample("latent_m", dist.HalfNormal(eps_var))
-            # if torch.sum(torch.isnan(eps_var)) > 0:
-            #     print("GUIDE")
-            #     print(torch.sum(torch.isnan(eps_var)))
 
         # Beta ----------------------------------------------------------------
         if k_denovo > 0:
             beta_mean = dist.HalfNormal(torch.ones(k_denovo, self.contexts)).sample()
             with pyro.plate("contexts", self.contexts):
                 with pyro.plate("k_denovo", k_denovo):
-                    beta = pyro.param("beta_denovo", beta_mean, constraint=constraints.greater_than_eq(1e-07))
-                    beta = torch.clamp(beta, 0, 1)
+                    beta = pyro.param("beta_denovo", beta_mean, constraint=constraints.greater_than_eq(0.))
+                    # beta = torch.clamp(beta, 0, 1)
                     pyro.sample("latent_signatures", dist.Delta(beta))
 
 
