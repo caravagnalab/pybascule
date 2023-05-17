@@ -105,15 +105,18 @@ class PyBasilica():
             else:
                 raise Exception("Invalid fixed signatures catalogue, expected DataFrame!")
         
-        if self.k_fixed > 0:
-            self._fix_zero_contexts()
+        # if self.k_fixed > 0:
+        #     self._fix_zero_contexts()
 
-    def _fix_zero_contexts(self):
-        zero_contexts = torch.sum(self.beta_fixed, axis=0)
-        if torch.any(zero_contexts == 0):
-            # self.stage = "random_noise"
-            random_sig = torch.randint(1, self.k_fixed, (int(torch.sum(zero_contexts)),))
-            self.beta_fixed[random_sig, zero_contexts] = 1e-07
+
+    # def _fix_zero_contexts(self):
+    #     zero_contexts = torch.sum(self.beta_fixed, axis=0)
+    #     if torch.any(zero_contexts == 0):
+    #         # self.stage = "random_noise"
+    #         random_sig = 0 if self.k_fixed == 1 else torch.randperm(0, self.k_fixed - 1, (int(torch.sum(zero_contexts)),))
+    #         self.beta_fixed[random_sig, zero_contexts==0] = 1e-07
+
+    #     self.beta_fixed = self.beta_fixed / (torch.sum(self.beta_fixed, 1).unsqueeze(-1))
 
 
     def _set_external_catalogue(self, regul_compare):
@@ -163,9 +166,9 @@ class PyBasilica():
         alpha_var = self.alpha_var
         exp_rate = self.exp_rate
 
-        print(k_denovo)
-        print(k_fixed)
-        print(self.stage)
+        # print(k_denovo)
+        # print(k_fixed)
+        # print(self.stage)
 
         #----------------------------- [ALPHA] -------------------------------------
         if cluster != None:
@@ -204,7 +207,7 @@ class PyBasilica():
         else:
             # if self.beta_fixed is not None and torch.sum(self.beta_fixed) == 0 and self.k_denovo == 0:
             if self._noise_only:
-                print("ZERO EXPOSURES")
+                # print("ZERO EXPOSURES")
                 alpha = torch.zeros(n_samples, 1)
             else:
                 with pyro.plate("k", k_fixed + k_denovo):   # columns
@@ -407,7 +410,7 @@ class PyBasilica():
         if reg_type == "cosine":
             for fixed in beta_fixed:
                 for denovo in beta_denovo:
-                    loss +=  torch.log((1 - F.cosine_similarity(fixed, denovo, dim = -1)))
+                    loss += torch.log((1 - F.cosine_similarity(fixed, denovo, dim = -1)))
         else:
             for fixed in beta_fixed:
                 for denovo in beta_denovo:
