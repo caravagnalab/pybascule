@@ -116,7 +116,7 @@ class PyBasilica():
         zero_contexts = torch.where(colsums==0)[0]
         if torch.any(colsums == 0):
             # self.stage = "random_noise"
-            random_sig = 0 if self.k_fixed == 1 else torch.randperm(self.beta_fixed.shape[0])[:torch.numel(zero_contexts)]
+            random_sig = [0] if self.k_fixed == 1 else torch.randperm(self.beta_fixed.shape[0])[:torch.numel(zero_contexts)]
 
             for rr in random_sig:
                 self.beta_fixed[rr, zero_contexts] = 1e-07
