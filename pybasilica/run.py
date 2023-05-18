@@ -97,7 +97,6 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", clus
             for k in k_list[1:]:
             
                 try:
-
                     obj = single_run(x=x, k_denovo=k, lr=lr, n_steps=n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed, compile_model=compile_model, \
                                      CUDA = CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, reg_weight = reg_weight, reg_bic = reg_bic, store_parameters=store_parameters, 
                                      stage=stage, regul_compare = regul_compare)
@@ -105,7 +104,8 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", clus
                     if obj.bic < minBic:
                         minBic = obj.bic
                         bestRun = obj
-                except:
+                except Exception as e:
+                    print(e)
                     continue
                 
                 progress.console.print(f"Running on k_denovo={k} | BIC={obj.bic}")
