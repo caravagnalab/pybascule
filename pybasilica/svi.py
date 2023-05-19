@@ -666,7 +666,7 @@ class PyBasilica():
         if self.k_denovo == 0 and torch.sum(self.beta_fixed) == 0:
             k = 0
         else:
-            k = (self.n_samples * (self.k_denovo + self.k_fixed)) + ((self.k_denovo + self.k_fixed) * self.contexts)
+            k = (self.n_samples * (self.k_denovo + self.k_fixed)) + ((self.k_denovo) * self.contexts)
         
         if self.eps_var is not None:
             k = k + self.eps_var.shape[0] * self.eps_var.shape[1]
