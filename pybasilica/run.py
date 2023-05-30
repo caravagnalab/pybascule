@@ -1,4 +1,4 @@
-from matplotlib import interactive
+# from matplotlib import interactive
 from rich.console import Console
 from rich.table import Table
 from rich import box
