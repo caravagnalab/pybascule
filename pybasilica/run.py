@@ -17,7 +17,6 @@ def single_run(kwargs):
     return obj
 
 
-
 def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", cluster=None, groups=None, beta_fixed=None, compile_model = False, \
         CUDA = False, enforce_sparsity = False, regularizer = "cosine", reg_weight = 1, reg_bic = False, store_parameters=False, verbose=True, 
         stage = "random_noise", regul_compare = None, seed = 10):

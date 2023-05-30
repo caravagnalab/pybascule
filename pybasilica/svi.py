@@ -497,9 +497,9 @@ class PyBasilica():
             regs.append(self.reg)
 
             # create likelihoods 
-            alpha = self._get_param("alpha", normalize=True)
-            eps_var = self._get_param("eps_var", normalize=False)
-            beta_denovo = self._get_param("beta_denovo", normalize=True)
+            alpha = self._get_param("alpha", normalize=True, to_cpu=False)
+            eps_var = self._get_param("eps_var", normalize=False, to_cpu=False)
+            beta_denovo = self._get_param("beta_denovo", normalize=True, to_cpu=False)
             likelihoods.append(self._likelihood(self.x, alpha, self.beta_fixed, beta_denovo, eps_var))
 
             # convergence test 
@@ -530,11 +530,11 @@ class PyBasilica():
         self._set_clusters()
 
 
-    def _get_param(self, param_name, normalize=False):
+    def _get_param(self, param_name, normalize=False, to_cpu=True):
         try:
             par = pyro.param(param_name)
 
-            if self.CUDA and torch.cuda.is_available(): par = par.cpu()
+            if to_cpu and self.CUDA and torch.cuda.is_available(): par = par.cpu()
 
             try:
                 par = par.clone().detach()
@@ -543,6 +543,7 @@ class PyBasilica():
                     par = par / (torch.sum(par, 1).unsqueeze(-1))
         except:
             if self._noise_only and param_name=="alpha":
+                # TODO check when running in GPU 
                 return torch.zeros(self.n_samples, 1, dtype=torch.float64)
             return None
 
