@@ -5,9 +5,9 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name = "pybasilica",
-    version = "0.1.2",
+    version = "0.1.3",
     author = "Azad Sadr",
-    author_email= "azad.sadr.h@gmail.com",
+    author_email = "azad.sadr.h@gmail.com",
     description = "A bayesian model to extract mutational signatures",
     long_description = long_description,
     long_description_content_type = "text/markdown",
