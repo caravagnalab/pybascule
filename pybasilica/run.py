@@ -1,4 +1,3 @@
-from matplotlib import interactive
 from rich.console import Console
 from rich.table import Table
 from rich import box
@@ -6,56 +5,52 @@ import time
 from rich.progress import Progress, BarColumn, TextColumn, TaskProgressColumn, TimeRemainingColumn, SpinnerColumn, RenderableColumn
 from rich.live import Live
 from rich.table import Table
+from sys import maxsize
 
 from pybasilica.svi import PyBasilica
-# from svi import PyBasilica
 
-def single_run(x, k_denovo, lr=0.05, n_steps=500, enumer=False, cluster=None, groups=None, beta_fixed=None, compile_model = False, \
-               CUDA = False, enforce_sparsity = False, regularizer = "cosine", reg_weight = 1, reg_bic = False, store_parameters=False, \
-               stage = "random_noise", regul_compare = None):
-    
-    obj = PyBasilica(x, k_denovo, lr, n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed, compile_model = compile_model, \
-                     CUDA = CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, reg_weight = reg_weight, reg_bic = reg_bic, \
-                     store_parameters=store_parameters, stage = stage, regul_compare = regul_compare)
+def single_run(kwargs):
+    obj = PyBasilica(**kwargs)
     obj._fit()
-    minBic = obj.bic
-    bestRun = obj
 
-    #for i in track(range(2), description="Processing..."):
-    for i in range(2):
-
-        obj = PyBasilica(x, k_denovo, lr, n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed, compile_model = compile_model, \
-                         CUDA = CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, reg_weight = reg_weight, reg_bic = reg_bic, \
-                         store_parameters=store_parameters, stage = stage, regul_compare = regul_compare)
-        obj._fit()
-
-        if obj.bic < minBic:
-            minBic = obj.bic
-            bestRun = obj
-
-    return bestRun
+    return obj
 
 
 
 def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", cluster=None, groups=None, beta_fixed=None, compile_model = False, \
         CUDA = False, enforce_sparsity = False, regularizer = "cosine", reg_weight = 1, reg_bic = False, store_parameters=False, verbose=True, 
-        stage = "random_noise", regul_compare = None):
+        stage = "random_noise", regul_compare = None, seed = 10):
 
     if isinstance(k_list, list):
-        if len(k_list) > 0:
-            pass
-        else:
-            raise Exception("k_list is an empty list!")
+        if len(k_list) > 0: pass
+        else: raise Exception("k_list is an empty list!")
     elif isinstance(k_list, int):
         k_list = [k_list]
-    else:
-        raise Exception("invalid k_list datatype")
+    else: raise Exception("invalid k_list datatype")
+    
+    kwargs = {
+            "x":x,
+            "lr":lr,
+            "n_steps":n_steps,
+            "enumer":enumer,
+            "cluster":cluster,
+            "groups":groups,
+            "beta_fixed":beta_fixed,
+            "compile_model":compile_model,
+            "CUDA":CUDA,
+            "enforce_sparsity":enforce_sparsity,
+            "regularizer":regularizer,
+            "reg_weight":reg_weight,
+            "reg_bic":reg_bic,
+            "store_parameters":store_parameters,
+            "stage":stage,
+            "regul_compare":regul_compare,
+            "seed":seed
+        }
 
-
-    #===============================================================
-    # verbose run ==================================================
-    #===============================================================
     if verbose:
+    # Verbose run
+
         console = Console()
         if beta_fixed is None:
             betaFixed = "No fixed signatures"
@@ -81,41 +76,38 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", clus
             TimeRemainingColumn(), 
             SpinnerColumn(), 
             RenderableColumn())
-
+        
         with myProgress as progress:
 
             task = progress.add_task("[red]running...", total=len(k_list))
 
-            obj = single_run(x=x, k_denovo=k_list[0], lr=lr, n_steps=n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed, compile_model = compile_model, \
-                             CUDA=CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, reg_weight = reg_weight, reg_bic = reg_bic, store_parameters=store_parameters, 
-                             stage=stage, regul_compare = regul_compare)
-            minBic = obj.bic
-            bestRun = obj
-            progress.console.print(f"Running on k_denovo={k_list[0]} | BIC={obj.bic}")
-            progress.update(task, advance=1)
+            minBic = maxsize
+            secondMinBic = maxsize
+            bestRun, secondBest = None, None
+            for k in k_list:
+                kwargs["k_denovo"] = k
 
-            for k in k_list[1:]:
-            
                 try:
-                    obj = single_run(x=x, k_denovo=k, lr=lr, n_steps=n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed, compile_model=compile_model, \
-                                     CUDA = CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, reg_weight = reg_weight, reg_bic = reg_bic, store_parameters=store_parameters, 
-                                     stage=stage, regul_compare = regul_compare)
+                    obj = single_run(kwargs)
 
                     if obj.bic < minBic:
                         minBic = obj.bic
                         bestRun = obj
-                except Exception as e:
-                    print(e)
-                    continue
+                    if obj.bic > minBic and obj.bic < secondMinBic:
+                        secondMinBic = obj.bic
+                        secondBest = obj
+                except:
+                    raise Exception("Failed to run for k_denovo:{k}!")
                 
                 progress.console.print(f"Running on k_denovo={k} | BIC={obj.bic}")
                 progress.update(task, advance=1)
 
-            try:
+            if bestRun is not None:
                 bestRun._convert_to_dataframe(x, beta_fixed)
-            except:
-                raise Exception("Not able to convert tensors to dataframe!")
-
+            
+            if secondBest is not None:
+                secondBest._convert_to_dataframe(x, beta_fixed)
+            
         from uniplot import plot
         console.print('\n-------------------------------------------------------\n\n[bold red]Best Model:')
         console.print(f"k_denovo: {bestRun.k_denovo}\nBIC: {bestRun.bic}\nStopped at {len(bestRun.losses)}th step\n")
@@ -127,62 +119,38 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", clus
             y_gridlines=[max(bestRun.losses)/2, min(bestRun.likelihoods)/2])
         console.print('\n')
 
-        return bestRun
-
-
     else:
-    #===============================================================
-    # Non-verbose run ==============================================
-    #===============================================================
+    # Non-verbose run
 
-        obj = single_run(x=x, k_denovo=k_list[0], lr=lr, n_steps=n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed, compile_model = compile_model, \
-                         CUDA = CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, reg_weight = reg_weight, reg_bic = reg_bic, store_parameters=store_parameters, 
-                         stage=stage, regul_compare = regul_compare)
-        minBic = obj.bic
-        bestRun = obj
-        
-        for k in k_list[1:]:
+        minBic = maxsize
+        secondMinBic = maxsize
+        bestRun, secondBest = None, None
+        for k in k_list:
+            kwargs["k_denovo"] = k
+
             try:
+                obj = single_run(kwargs)
 
-                obj = single_run(x=x, k_denovo=k, lr=lr, n_steps=n_steps, enumer=enumer, cluster=cluster, groups=groups, beta_fixed=beta_fixed, compile_model = compile_model, \
-                                 CUDA = CUDA, enforce_sparsity = enforce_sparsity, regularizer = regularizer, reg_weight = reg_weight, reg_bic = reg_bic, store_parameters=store_parameters, 
-                                 stage=stage, regul_compare = regul_compare)
                 if obj.bic < minBic:
                     minBic = obj.bic
                     bestRun = obj
+                    if k == k_list[0] and len(k_list)>1:
+                        secondMinBic = obj.bic
+                        secondBest = obj
+
+                if obj.bic > minBic and obj.bic < secondMinBic and len(k_list)>1:
+                    secondMinBic = obj.bic
+                    secondBest = obj
             except:
                 raise Exception("Failed to run for k_denovo:{k}!")
 
-        try:
+        if bestRun is not None:
             bestRun._convert_to_dataframe(x, beta_fixed)
-        except:
-            raise Exception("Not able to convert tensors to dataframe!")
         
-        return bestRun
-            
-        #try:
-        #    bestRun._convert_to_dataframe(x, beta_fixed)
-    #minBic = 10000000
-    #bestRun = None
+        if secondBest is not None:
+            secondBest._convert_to_dataframe(x, beta_fixed)
 
-    '''
-    obj = single_run(x=x, k_denovo=k_list[0], lr=lr, n_steps=n_steps, groups=groups, beta_fixed=beta_fixed, CUDA = CUDA, compile_model = compile_model)
-    minBic = obj.bic
-    bestRun = obj
-
-    for k in k_list[1:]:
-        try:
-            obj = single_run(x=x, k_denovo=k, lr=lr, n_steps=n_steps, groups=groups, beta_fixed=beta_fixed, CUDA = CUDA, compile_model = compile_model)
-
-            if obj.bic < minBic:
-                minBic = obj.bic
-                bestRun = obj
-        except:
-            raise Exception("No run, please take care of inputs, probably k_list!")
-
-        return bestRun
-
-        '''
+    return bestRun, secondBest
 
 
 
