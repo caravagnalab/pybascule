@@ -43,11 +43,12 @@ class PyBasilica():
         ):
 
         self._set_data_catalogue(x)
+        self._set_fit_settings(enforce_sparsity, lr, n_steps, compile_model, CUDA, regularizer, reg_weight, reg_bic, store_parameters, stage)
+
         self._set_beta_fixed(beta_fixed)
         self._set_k_denovo(k_denovo)
 
         self._set_hyperparams(enumer, cluster, alpha_var, exp_rate, groups)
-        self._set_fit_settings(enforce_sparsity, lr, n_steps, compile_model, CUDA, regularizer, reg_weight, reg_bic, store_parameters, stage)
 
         self._fix_zero_denovo_null_reference()
         self._set_external_catalogue(regul_compare)
@@ -110,13 +111,14 @@ class PyBasilica():
                 self.beta_fixed = self.beta_fixed.reshape(1, self.beta_fixed.shape[0])
 
             self.k_fixed = beta_fixed.shape[0]
+
         except:
             if beta_fixed is None:
                 self.beta_fixed = None
                 self.k_fixed = 0
             else:
                 raise Exception("Invalid fixed signatures catalogue, expected DataFrame!")
-        
+
         if self.k_fixed > 0:
             self._fix_zero_contexts()
 
@@ -681,7 +683,7 @@ class PyBasilica():
         _log_like = self._likelihood(M, alpha, self.beta_fixed, self.beta_denovo, self.eps_var)
 
         # adding regularizer
-        if self.reg_bic:
+        if self.reg_weight != 0 and self.reg_bic:
             reg = self._regularizer(self.beta_fixed, self.beta_denovo, reg_type = self.regularizer)
             _log_like += self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1])
         
