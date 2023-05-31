@@ -35,15 +35,7 @@ jobs:
       run: |
         python3 -m pip install --upgrade pip
         python3 -m pip install setuptools wheel twine
-      
-    - name: Publish package to TestPyPI
-      run: |
-          python3 setup.py sdist bdist_wheel
-          python3 -m twine upload --repository-url https://test.pypi.org/legacy/ dist/*
-      env:
-        TWINE_USERNAME: __token__
-        TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
-    
+
     - name: Publish package to PyPI
       run: |
           python3 setup.py sdist bdist_wheel
