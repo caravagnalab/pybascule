@@ -148,17 +148,17 @@ class PyBasilica():
             self._fix_zero_contexts()
 
 
-    def _fix_zero_contexts(self):
-        colsums = torch.sum(self.beta_fixed, axis=0)
-        zero_contexts = torch.where(colsums==0)[0]
-        if torch.any(colsums == 0):
-            # self.stage = "random_noise"
-            random_sig = 0 if self.k_fixed == 1 else torch.randperm(self.beta_fixed.shape[0])[:torch.numel(zero_contexts)]
+    # def _fix_zero_contexts(self):
+    #     colsums = torch.sum(self.beta_fixed, axis=0)
+    #     zero_contexts = torch.where(colsums==0)[0]
+    #     if torch.any(colsums == 0):
+    #         # self.stage = "random_noise"
+    #         random_sig = 0 if self.k_fixed == 1 else torch.randperm(self.beta_fixed.shape[0])[:torch.numel(zero_contexts)]
 
-            for rr in random_sig:
-                self.beta_fixed[rr, zero_contexts] = 1e-07
+    #         for rr in random_sig:
+    #             self.beta_fixed[rr, zero_contexts] = 1e-07
 
-            self.beta_fixed = self.beta_fixed / (torch.sum(self.beta_fixed, 1).unsqueeze(-1))
+    #         self.beta_fixed = self.beta_fixed / (torch.sum(self.beta_fixed, 1).unsqueeze(-1))
 
 
     def _set_k_denovo(self, k_denovo):
