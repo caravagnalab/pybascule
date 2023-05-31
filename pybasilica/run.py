@@ -93,7 +93,7 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", clus
                     if obj.bic < minBic:
                         minBic = obj.bic
                         bestRun = obj
-                    if obj.bic > minBic and obj.bic < secondMinBic:
+                    if obj.bic >= minBic and obj.bic < secondMinBic:
                         secondMinBic = obj.bic
                         secondBest = obj
                 except:

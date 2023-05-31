@@ -706,6 +706,9 @@ class PyBasilica():
 
     def _convert_to_dataframe(self, x, beta_fixed):
 
+        if isinstance(self.beta_fixed, pd.DataFrame):
+            self.beta_fixed = torch.tensor(self.beta_fixed.values, dtype=torch.float64)
+
         # mutations catalogue
         self.x = x
         sample_names = list(x.index)
