@@ -42,6 +42,8 @@ class PyBasilica():
         seed = 10
         ):
 
+        print("\n\n\niteration with k =", k_denovo)
+
         self._set_data_catalogue(x)
         self._set_fit_settings(enforce_sparsity, lr, n_steps, compile_model, CUDA, regularizer, reg_weight, reg_bic, store_parameters, stage)
 
@@ -138,14 +140,16 @@ class PyBasilica():
     def _set_external_catalogue(self, regul_compare):
         try:
             self.regul_compare = torch.tensor(regul_compare.values, dtype=torch.float64)
+            if self.CUDA and torch.cuda.is_available():
+                self.regul_compare = self.regul_compare.cuda()
         except:
             if regul_compare is None:
                 self.regul_compare = None
             else:
                 raise Exception("Invalid external signatures catalogue, expected DataFrame!")
 
-        if self.k_fixed > 0:
-            self._fix_zero_contexts()
+        # if self.k_fixed > 0:
+        #     self._fix_zero_contexts()
 
 
     def _set_k_denovo(self, k_denovo):
@@ -423,19 +427,9 @@ class PyBasilica():
     def _likelihood(self, M, alpha, beta_fixed, beta_denovo, eps_var=None):
         beta = self._get_unique_beta(beta_fixed, beta_denovo)
 
-        # print("beta_lik shape", beta.shape)
-        # print("alpha_lik shape", alpha.shape)
-        # print("M_lik shape", M.shape)
-
         ssum = torch.sum(M, axis=1)
-        # print(ssum.shape)
         ddiag = torch.diag(ssum)
-        # print(ddiag.shape)
-        # print(alpha)
         mmult1 = torch.matmul(ddiag, alpha)
-
-        # print(ddiag.shape)
-        # print(mmult1.shape)
 
         a = torch.matmul(mmult1, beta)
 
@@ -471,7 +465,11 @@ class PyBasilica():
             torch.set_default_tensor_type('torch.cuda.FloatTensor')
             self.x = self.x.cuda()
             if self.beta_fixed is not None:
+                print("Moving beta_fixed to GPU")
                 self.beta_fixed = self.beta_fixed.cuda()
+            if self.regul_compare is not None:
+                print("Moving regul_compare to GPU")
+                self.regul_compare = self.regul_compare.cuda()
         else:
             torch.set_default_tensor_type(t=torch.FloatTensor)
 
@@ -499,6 +497,7 @@ class PyBasilica():
         regs = []
         likelihoods = []
         for _ in range(self.n_steps):   # inference - do gradient steps
+
             loss = svi.step()
             losses.append(loss)
             regs.append(self.reg)
@@ -509,17 +508,22 @@ class PyBasilica():
             beta_denovo = self._get_param("beta_denovo", normalize=True, to_cpu=False)
             likelihoods.append(self._likelihood(self.x, alpha, self.beta_fixed, beta_denovo, eps_var))
 
+            if self.store_parameters:
+                train_params.append(self.get_param_dict())
+
             # convergence test 
             if len(losses) >= min_steps and len(losses) % min_steps == 0 and convergence(x=losses[-min_steps:], alpha=0.05):
                 break
 
-            if self.store_parameters:
-                train_params.append(self.get_param_dict())
 
         if self.CUDA and torch.cuda.is_available():
           self.x = self.x.cpu()
           if self.beta_fixed is not None:
+            print("moving beta_fixed to CPU")
             self.beta_fixed = self.beta_fixed.cpu()
+          if self.regul_compare is not None:
+                print("Moving regul_compare to CPU")
+                self.regul_compare = self.regul_compare.cpu()
 
         self.train_params = train_params
         self.losses = losses
@@ -539,7 +543,8 @@ class PyBasilica():
 
     def _get_param(self, param_name, normalize=False, to_cpu=True):
         try:
-            par = pyro.param(param_name)
+            if param_name == "beta_fixed": par = self.beta_fixed
+            else: par = pyro.param(param_name)
 
             if to_cpu and self.CUDA and torch.cuda.is_available(): par = par.cpu()
 
@@ -614,7 +619,7 @@ class PyBasilica():
         params["alpha_prior"] = self._get_param("alpha_t_param", normalize=True)
 
         params["beta_d"] =  self._get_param("beta_denovo", normalize=True)
-        params["beta_f"] = self.beta_fixed
+        params["beta_f"] = self._get_param("beta_fixed")
 
         params["pi"] = self._get_param("pi", normalize=False)
 
@@ -664,7 +669,6 @@ class PyBasilica():
 
 
     def _set_bic(self):
-
         M = self.x
         alpha = self.alpha
 
