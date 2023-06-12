@@ -42,8 +42,6 @@ class PyBasilica():
         seed = 10
         ):
 
-        print("\n\n\niteration with k =", k_denovo)
-
         self._set_data_catalogue(x)
         self._set_fit_settings(enforce_sparsity, lr, n_steps, compile_model, CUDA, regularizer, reg_weight, reg_bic, store_parameters, stage)
 
