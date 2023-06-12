@@ -193,6 +193,7 @@ class PyBasilica():
             else:
                 with pyro.plate("k1", k_fixed+k_denovo):
                     with pyro.plate("g", n_groups):
+                        # G x K matrix
                         alpha_prior = pyro.sample("alpha_t", dist.HalfNormal(alpha_var))
 
                 # sample from the alpha prior
@@ -265,33 +266,6 @@ class PyBasilica():
             pyro.factor("loss", lk.sum() + self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1]))
 
 
-    def _initialize_params(self):
-        if self.init_params is None:
-            params = dict()
-            
-            if self.cluster is not None:
-                params["pi_param"] = torch.ones(self.cluster, dtype=torch.float64)
-                params["alpha_t_param"] = dist.HalfNormal(torch.ones(self.cluster, self.k_fixed + self.k_denovo, dtype=torch.float64) * \
-                                                        torch.tensor(self.alpha_var)).sample()
-            elif self.groups is not None:
-                params["alpha_t_param"] = dist.HalfNormal(torch.ones(len(set(self.groups)), self.k_fixed + self.k_denovo, dtype=torch.float64) * \
-                                                        torch.tensor(self.alpha_var)).sample()
-            else:
-                if self.enforce_sparsity:
-                    params["alpha_mean"] = dist.Exponential(torch.ones(self.n_samples, self.k_fixed + self.k_denovo, dtype=torch.float64) * self.exp_rate).sample()
-                else:
-                    params["alpha_mean"] = dist.HalfNormal(torch.ones(self.n_samples, self.k_fixed + self.k_denovo, dtype=torch.float64) * self.alpha_var).sample()
-
-            params["epsilon_var"] = torch.ones(self.n_samples, self.contexts, dtype=torch.float64)
-
-            if self.k_denovo > 0:
-                params["beta_dn_param"] = dist.HalfNormal(torch.ones(self.k_denovo, self.contexts, dtype=torch.float64)).sample()
-
-            self.init_params = params
-
-        return self.init_params
-
-
     def guide(self):
 
         n_samples = self.n_samples
@@ -337,7 +311,7 @@ class PyBasilica():
                     if enumer != False:
                         z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":enumer})
 
-                    alpha = pyro.param("alpha", lambda: alpha_prior[z], constraint=constraints.greater_than_eq(0))
+                    alpha = pyro.param("alpha", lambda: alpha_prior[z.long()], constraint=constraints.greater_than_eq(0))
                     pyro.sample("latent_exposure", dist.Delta(alpha).expand([1, k_fixed+k_denovo]))
 
         # No groups
@@ -368,6 +342,33 @@ class PyBasilica():
                 with pyro.plate("k_denovo", k_denovo):
                     beta = pyro.param("beta_denovo", beta_par, constraint=constraints.greater_than_eq(0.0))
                     pyro.sample("latent_signatures", dist.Delta(beta))
+
+
+    def _initialize_params(self):
+        if self.init_params is None:
+            params = dict()
+            
+            if self.cluster is not None:
+                params["pi_param"] = torch.ones(self.cluster, dtype=torch.float64)
+                params["alpha_t_param"] = dist.HalfNormal(torch.ones(self.cluster, self.k_fixed + self.k_denovo, dtype=torch.float64) * \
+                                                        torch.tensor(self.alpha_var)).sample()
+            elif self.groups is not None:
+                params["alpha_t_param"] = dist.HalfNormal(torch.ones(len(set(self.groups)), self.k_fixed + self.k_denovo, dtype=torch.float64) * \
+                                                        torch.tensor(self.alpha_var)).sample()
+            else:
+                if self.enforce_sparsity:
+                    params["alpha_mean"] = dist.Exponential(torch.ones(self.n_samples, self.k_fixed + self.k_denovo, dtype=torch.float64) * self.exp_rate).sample()
+                else:
+                    params["alpha_mean"] = dist.HalfNormal(torch.ones(self.n_samples, self.k_fixed + self.k_denovo, dtype=torch.float64) * self.alpha_var).sample()
+
+            params["epsilon_var"] = torch.ones(self.n_samples, self.contexts, dtype=torch.float64)
+
+            if self.k_denovo > 0:
+                params["beta_dn_param"] = dist.HalfNormal(torch.ones(self.k_denovo, self.contexts, dtype=torch.float64)).sample()
+
+            self.init_params = params
+
+        return self.init_params
 
 
     def _regularizer(self, beta_fixed, beta_denovo, reg_type = "cosine"):
