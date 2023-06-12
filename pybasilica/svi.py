@@ -24,19 +24,19 @@ class PyBasilica():
         k_denovo,
         lr,
         n_steps,
-        enumer=False, # if True, will enumerate the Z
-        cluster=None,
-        alpha_var=1,
-        exp_rate=3,
-        groups=None,
-        beta_fixed=None,
+        enumer = False, # if True, will enumerate the Z
+        cluster = None,
+        alpha_var = 1,
+        exp_rate = 3,
+        groups = None,
+        beta_fixed = None,
         compile_model = True,
         CUDA = False,
         enforce_sparsity = False,
         store_parameters = False,
         regularizer = "cosine",
-        reg_weight = 1,
-        reg_bic = False, 
+        reg_weight = 1.,
+        reg_bic = True, 
         stage = "random_noise", 
         regul_compare = None,
         seed = 10
@@ -145,9 +145,6 @@ class PyBasilica():
                 self.regul_compare = None
             else:
                 raise Exception("Invalid external signatures catalogue, expected DataFrame!")
-
-        # if self.k_fixed > 0:
-        #     self._fix_zero_contexts()
 
 
     def _set_k_denovo(self, k_denovo):
