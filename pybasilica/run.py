@@ -10,16 +10,41 @@ from sys import maxsize
 
 from pybasilica.svi import PyBasilica
 
-def single_run(kwargs):
-    obj = PyBasilica(**kwargs)
-    obj._fit()
+def single_run(seed_list, save_runs_seed, kwargs):
+    minBic = maxsize
+    bestRun = None
+    runs_seed = dict()
 
-    return obj
+    scores = dict()
+
+    for seed in seed_list:
+        obj = PyBasilica(seed=seed, **kwargs)
+        obj._fit()
+
+        scores["seed_"+str(seed)] = {"bic":obj.bic, "llik":obj.likelihood}
+
+        if bestRun is None or obj.bic < minBic:
+            minBic = obj.bic
+            bestRun = obj
+
+        if save_runs_seed:
+            runs_seed["seed_"+str(seed)] = obj
+
+    bestRun.runs_scores = scores
+
+    if save_runs_seed:
+        bestRun.runs_seed = runs_seed
+
+    return bestRun
 
 
-def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", cluster=None, groups=None, beta_fixed=None, compile_model = False, \
-        CUDA = False, enforce_sparsity = False, regularizer = "cosine", reg_weight = 1, reg_bic = False, store_parameters=False, verbose=True, 
-        stage = "random_noise", regul_compare = None, seed = 10):
+def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluster=None, groups=None, beta_fixed=None, hyperparameters=None,
+        compile_model = False, CUDA = False, enforce_sparsity = False, regularizer = "cosine", reg_weight = 1, reg_bic = False,
+        store_parameters=False, verbose=True, stage = "random_noise", regul_compare = None, seed = 10, initializ_seed = True, 
+        save_runs_seed = False, initializ_pars_fit = False):
+
+    if isinstance(seed, int):
+        seed = [seed]
 
     if isinstance(k_list, list):
         if len(k_list) > 0: pass
@@ -36,6 +61,7 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", clus
             "cluster":cluster,
             "groups":groups,
             "beta_fixed":beta_fixed,
+            "hyperparameters":hyperparameters,
             "compile_model":compile_model,
             "CUDA":CUDA,
             "enforce_sparsity":enforce_sparsity,
@@ -45,7 +71,8 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", clus
             "store_parameters":store_parameters,
             "stage":stage,
             "regul_compare":regul_compare,
-            "seed":seed
+            "initializ_seed":initializ_seed,
+            "initializ_pars_fit":initializ_pars_fit
         }
 
     if verbose:
@@ -76,7 +103,7 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", clus
             TimeRemainingColumn(), 
             SpinnerColumn(), 
             RenderableColumn())
-        
+
         with myProgress as progress:
 
             task = progress.add_task("[red]running...", total=len(k_list))
@@ -84,29 +111,34 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", clus
             minBic = maxsize
             secondMinBic = maxsize
             bestRun, secondBest = None, None
+
+            scores_k = dict()
             for k in k_list:
                 kwargs["k_denovo"] = k
 
                 try:
-                    obj = single_run(kwargs)
+                    obj = single_run(seed_list=seed, save_runs_seed=save_runs_seed, kwargs=kwargs)
 
                     if obj.bic < minBic:
                         minBic = obj.bic
                         bestRun = obj
-                    if obj.bic >= minBic and obj.bic < secondMinBic:
+                    if minBic == secondMinBic or (obj.bic > minBic and obj.bic < secondMinBic):
                         secondMinBic = obj.bic
                         secondBest = obj
                 except:
                     raise Exception("Failed to run for k_denovo:{k}!")
                 
+                # scores_k["K_"+str(k)] = {"bic":obj.bic, "llik":obj.likelihood}
+                scores_k["K_"+str(k)] = obj.runs_scores
+                
                 progress.console.print(f"Running on k_denovo={k} | BIC={obj.bic}")
                 progress.update(task, advance=1)
 
             if bestRun is not None:
-                bestRun._convert_to_dataframe(x, beta_fixed)
+                bestRun.convert_to_dataframe(x, beta_fixed)
             
             if secondBest is not None:
-                secondBest._convert_to_dataframe(x, beta_fixed)
+                secondBest.convert_to_dataframe(x, beta_fixed)
             
         from uniplot import plot
         console.print('\n-------------------------------------------------------\n\n[bold red]Best Model:')
@@ -125,11 +157,13 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", clus
         minBic = maxsize
         secondMinBic = maxsize
         bestRun, secondBest = None, None
+
+        scores_k = dict()
         for k in k_list:
             kwargs["k_denovo"] = k
 
             try:
-                obj = single_run(kwargs)
+                obj = single_run(seed_list=seed, save_runs_seed=save_runs_seed, kwargs=kwargs)
 
                 if obj.bic < minBic:
                     minBic = obj.bic
@@ -144,11 +178,16 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="sequential", clus
             except:
                 raise Exception("Failed to run for k_denovo:{k}!")
 
+            # scores_k["K_"+str(k)] = {"bic":obj.bic, "llik":obj.likelihood}
+            scores_k["K_"+str(k)] = obj.runs_scores
+
         if bestRun is not None:
-            bestRun._convert_to_dataframe(x, beta_fixed)
+            bestRun.convert_to_dataframe(x, beta_fixed)
         
         if secondBest is not None:
-            secondBest._convert_to_dataframe(x, beta_fixed)
+            secondBest.convert_to_dataframe(x, beta_fixed)
+
+    bestRun.scores_K = scores_k
 
     return bestRun, secondBest
 
