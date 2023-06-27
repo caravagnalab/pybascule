@@ -415,7 +415,7 @@ class PyBasilica():
 
         params = dict()
 
-        print("Initializing parameters with non-hierarchical fit")
+        # print("Initializing parameters with non-hierarchical fit")
         self._fit(set_attributes=False)
 
         if self.cluster is not None: raise NotImplementedError
@@ -597,7 +597,7 @@ class PyBasilica():
         if self.initializ_seed:
             _, self.seed = min([self._initialize_seed(optimizer, elbo, seed) for seed in range(50)], key = lambda x: x[0])
 
-        print("Running with seed {}\n".format(self.seed))
+        # print("Running with seed {}\n".format(self.seed))
         pyro.set_rng_seed(self.seed)
         pyro.get_param_store().clear()
 
