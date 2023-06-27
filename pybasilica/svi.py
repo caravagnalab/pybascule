@@ -91,8 +91,11 @@ class PyBasilica():
 
 
     def _set_hyperparams(self, enumer, cluster, groups, hyperparameters):
+        if groups is None and cluster is None:
+            self.new_hier = False
         self.enumer = enumer
-        self.cluster = cluster
+        self.cluster = None if cluster == 1 else cluster
+        if self.cluster is not None: self.cluster = int(self.cluster)
         self._set_groups(groups)
 
         self.init_params = None
@@ -189,6 +192,71 @@ class PyBasilica():
                 raise Exception("invalid groups argument, expected 'None' or a list with {} elements!".format(self.n_samples))
 
 
+    def _sample_alpha_hier(self):
+        if self._noise_only:
+                alpha = torch.zeros(self.n_samples, 1, dtype=torch.float64)
+        else:
+            with pyro.plate("k1", self.k_fixed + self.k_denovo):
+                with pyro.plate("g", self.n_groups):
+                    # G x K matrix
+                    alpha_prior = pyro.sample("alpha_t", dist.HalfNormal(self.hyperparameters["alpha_prior_var"]))
+
+            # sample from the alpha prior
+            with pyro.plate("k", self.k_fixed + self.k_denovo):  # columns
+                with pyro.plate("n", self.n_samples):  # rows
+                    alpha_noise = pyro.sample("alpha_noise", dist.HalfNormal(self.hyperparameters["alpha_noise_var"]))
+                    alpha = pyro.sample("latent_exposure", dist.Normal(alpha_prior[self.groups,:], self.hyperparameters["alpha_var"]))
+
+            alpha = alpha + alpha_noise
+            alpha = alpha / (torch.sum(alpha, 1).unsqueeze(-1))
+            alpha = torch.clamp(alpha, 0, 1)
+        
+        return alpha
+    
+
+    def _sample_alpha_flat(self):
+        if self._noise_only:
+                alpha = torch.zeros(self.n_samples, 1, dtype=torch.float64)
+        else:
+            with pyro.plate("k", self.k_fixed + self.k_denovo):  # columns
+                with pyro.plate("n", self.n_samples):  # rows
+                    if self.enforce_sparsity:
+                        alpha = pyro.sample("latent_exposure", dist.Exponential(self.hyperparameters["exp_rate"]))
+                    else:
+                        alpha = pyro.sample("latent_exposure", dist.HalfNormal(self.hyperparameters["alpha_var"]))
+
+            alpha = alpha / (torch.sum(alpha, 1).unsqueeze(-1))
+            alpha = torch.clamp(alpha, 0, 1)
+
+        return alpha
+    
+
+    def _sample_epsilon(self):
+        # Epsilon
+        if self.stage == "random_noise":
+            with pyro.plate("contexts3", self.contexts):  # columns
+                    with pyro.plate("n3", self.n_samples):  # rows
+                        epsilon = pyro.sample("latent_m", dist.HalfNormal(self.hyperparameters["eps_var"]))
+        else:
+            epsilon = None
+
+        return epsilon
+    
+
+    def _sample_beta_dn(self):
+        if self.k_denovo == 0:
+            beta_denovo = None
+        else:
+            with pyro.plate("contexts", self.contexts):  # columns
+                with pyro.plate("k_denovo", self.k_denovo):  # rows
+                    beta_denovo = pyro.sample("latent_signatures", dist.HalfNormal(self.hyperparameters["beta_var"]))
+
+            beta_denovo = beta_denovo / (torch.sum(beta_denovo, 1).unsqueeze(-1))  # normalize
+            beta_denovo = torch.clamp(beta_denovo, 0, 1)
+
+        return beta_denovo
+
+
     def model(self):
 
         n_samples = self.n_samples
@@ -201,71 +269,24 @@ class PyBasilica():
 
         alpha_var = self.hyperparameters["alpha_var"]
         alpha_prior_var = self.hyperparameters["alpha_prior_var"]
-        exp_rate = self.hyperparameters["exp_rate"]
-        beta_var = self.hyperparameters["beta_var"]
-        eps_var = self.hyperparameters["eps_var"]
-        alpha_noise_var = self.hyperparameters["alpha_noise_var"]
 
         # Alpha
         if groups is not None:
-            if self._noise_only:
-                alpha = torch.zeros(n_samples, 1, dtype=torch.float64)
-            else:
-                with pyro.plate("k1", k_fixed+k_denovo):
-                    with pyro.plate("g", n_groups):
-                        # G x K matrix
-                        alpha_prior = pyro.sample("alpha_t", dist.HalfNormal(alpha_prior_var))
-
-                # sample from the alpha prior
-                with pyro.plate("k", k_fixed + k_denovo):  # columns
-                    with pyro.plate("n", n_samples):  # rows
-                        alpha_noise = pyro.sample("alpha_noise", dist.HalfNormal(alpha_noise_var))
-                        alpha = pyro.sample("latent_exposure", dist.Normal(alpha_prior[groups,:], alpha_var))
-
-                alpha = alpha + alpha_noise
-                alpha = alpha / (torch.sum(alpha, 1).unsqueeze(-1))
-                alpha = torch.clamp(alpha, 0, 1)
+            alpha = self._sample_alpha_hier()
 
         elif cluster is not None:
             pi = pyro.sample("pi", dist.Dirichlet(torch.ones(cluster) / cluster))
             with pyro.plate("k1", k_fixed + k_denovo):
-                with pyro.plate("g", cluster):
-                    # G x K matrix
+                with pyro.plate("g", cluster):  # G x K matrix
                     alpha_prior = pyro.sample("alpha_t", dist.HalfNormal(alpha_prior_var))
 
         else:
-            if self._noise_only:
-                alpha = torch.zeros(n_samples, 1, dtype=torch.float64)
-            else:
-                with pyro.plate("k", k_fixed + k_denovo):  # columns
-                    with pyro.plate("n", n_samples):  # rows
-                        if self.enforce_sparsity:
-                            alpha = pyro.sample("latent_exposure", dist.Exponential(exp_rate))
-                        else:
-                            alpha = pyro.sample("latent_exposure", dist.HalfNormal(alpha_var))
+            alpha = self._sample_alpha_flat()
 
-                alpha = alpha / (torch.sum(alpha, 1).unsqueeze(-1))
-                alpha = torch.clamp(alpha, 0, 1)
-
-        # Epsilon
-        if self.stage == "random_noise":
-            with pyro.plate("contexts3", self.contexts):  # columns
-                    with pyro.plate("n3", n_samples):  # rows
-                        epsilon = pyro.sample("latent_m", dist.HalfNormal(eps_var))
-        else:
-            epsilon = None
+        epsilon = self._sample_epsilon()
 
         # Beta
-        if k_denovo == 0:
-            beta_denovo = None
-        else:
-            with pyro.plate("contexts", self.contexts):  # columns
-                with pyro.plate("k_denovo", k_denovo):  # rows
-                    beta_denovo = pyro.sample("latent_signatures", dist.HalfNormal(beta_var))
-
-            beta_denovo = beta_denovo / (torch.sum(beta_denovo, 1).unsqueeze(-1))  # normalize
-            beta_denovo = torch.clamp(beta_denovo, 0, 1)
-
+        beta_denovo = self._sample_beta_dn()
         beta = self._get_unique_beta(self.beta_fixed, beta_denovo)
         reg = self._regularizer(self.beta_fixed, beta_denovo, self.regularizer)
         self.reg = reg
@@ -274,7 +295,7 @@ class PyBasilica():
         with pyro.plate("n2", n_samples):
             if cluster is not None:
                 z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":enumer})
-                alpha = pyro.sample("latent_exposure", dist.Normal(alpha_prior[z], alpha_var).to_event(1)) #.expand([n_samples, k_fixed+k_denovo]))
+                alpha = pyro.sample("latent_exposure", dist.Normal(alpha_prior[z], alpha_var).to_event(1))
 
             a = torch.matmul(torch.matmul(torch.diag(torch.sum(self.x, axis=1)), alpha), beta)
 
@@ -283,77 +304,27 @@ class PyBasilica():
                 lk =  dist.Poisson(xx).log_prob(self.x)
             else:
                 lk =  dist.Poisson(a).log_prob(self.x)
-            # pyro.factor("loss", lk + self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1]))
+
             pyro.factor("loss", lk.sum() + self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1]))
 
 
     def guide(self):
 
         n_samples = self.n_samples
-        k_fixed = self.k_fixed
         k_denovo = self.k_denovo
         groups = self.groups
         cluster = self.cluster
-        enumer = self.enumer
-        n_groups = self.n_groups
-
         init_params = self._initialize_params()
 
         # Alpha
         if groups is not None:
-            if not self._noise_only:
-                alpha_prior = pyro.param("alpha_t_param", init_params["alpha_t_param"], constraint=constraints.greater_than_eq(0))
-
-                with pyro.plate("k1", k_fixed+k_denovo):
-                    with pyro.plate("g", n_groups):
-                        pyro.sample("alpha_t", dist.Delta(alpha_prior))
-
-                with pyro.plate("k", k_fixed + k_denovo):  # columns
-                    with pyro.plate("n", n_samples):  # rows
-                        if self.new_hier:
-                            alpha_noise_param = pyro.param("alpha_noise_param", init_params["alpha_noise"], constraint=constraints.greater_than(0.))
-                            alpha_noise = pyro.sample("alpha_noise", dist.Delta(alpha_noise_param))
-                            pyro.sample("latent_exposure", dist.Delta(alpha_prior[groups, :] + alpha_noise))
-                        else:
-                            alpha = pyro.param("alpha", alpha_prior[groups, :], constraint=constraints.greater_than_eq(0))
-                            pyro.sample("latent_exposure", dist.Delta(alpha))
+            self._guide_alpha_hier(init_params)
 
         elif cluster is not None:
-            if not self._noise_only:
-                pi_param = pyro.param("pi_param", init_params["pi_param"], constraint=constraints.simplex)
-                pi = pyro.sample("pi", dist.Delta(pi_param).to_event(1))
+            self._guide_alpha_clustering(init_params)
 
-                alpha_prior = pyro.param("alpha_t_param", init_params["alpha_t_param"], constraint=constraints.greater_than_eq(0))
-                alpha_noise_param = pyro.param("alpha_noise_param", init_params["alpha_noise"], constraint=constraints.greater_than(0.))
-
-                with pyro.plate("k1", k_fixed+k_denovo):
-                    with pyro.plate("g", cluster):
-                        pyro.sample("alpha_t", dist.Delta(alpha_prior))
-                    
-                    with pyro.plate("n", n_samples):  # rows
-                        alpha_noise = pyro.sample("alpha_noise", dist.Delta(alpha_noise_param))
-
-                with pyro.plate("n2", n_samples):
-                    z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":enumer})
-
-                    if self.new_hier:
-                        pyro.sample("latent_exposure", dist.Delta(alpha_prior[z.long()] + alpha_noise).to_event(1))
-                    else:
-                        alpha = pyro.param("alpha", lambda: alpha_prior[z.long()], constraint=constraints.greater_than_eq(0))
-                        pyro.sample("latent_exposure", dist.Delta(alpha).to_event(1))
-
-        # No groups
         else:
-            if not self._noise_only:
-                alpha_mean = init_params["alpha_mean"]
-
-                with pyro.plate("k", k_fixed + k_denovo):
-                    with pyro.plate("n", n_samples):
-                        if self.enforce_sparsity:
-                            alpha = pyro.param("alpha", alpha_mean, constraint=constraints.greater_than(0.0))
-                        else:
-                            alpha = pyro.param("alpha", alpha_mean, constraint=constraints.greater_than_eq(0.0))
-                        pyro.sample("latent_exposure", dist.Delta(alpha))
+            self._guide_alpha_flat(init_params)
 
         # Epsilon 
         if self.stage == "random_noise":
@@ -370,6 +341,66 @@ class PyBasilica():
                 with pyro.plate("k_denovo", k_denovo):
                     beta = pyro.param("beta_denovo", beta_par, constraint=constraints.greater_than_eq(0.0))
                     pyro.sample("latent_signatures", dist.Delta(beta))
+
+
+    def _guide_alpha_hier(self, init_params):
+        if not self._noise_only:
+            alpha_prior_param = pyro.param("alpha_t_param", init_params["alpha_t_param"], constraint=constraints.greater_than_eq(0))
+
+            with pyro.plate("k1", self.k_fixed+self.k_denovo):
+                with pyro.plate("g", self.n_groups):
+                    pyro.sample("alpha_t", dist.Delta(alpha_prior_param))
+
+                with pyro.plate("n", self.n_samples):  # rows
+                    if self.new_hier:
+                        alpha_noise_param = pyro.param("alpha_noise_param", init_params["alpha_noise"], constraint=constraints.greater_than(0.))
+                        alpha_noise = pyro.sample("alpha_noise", dist.Delta(alpha_noise_param))
+                        pyro.sample("latent_exposure", dist.Delta(alpha_prior_param[self.groups, :] + alpha_noise))
+                    else:
+                        alpha = pyro.param("alpha", alpha_prior_param[self.groups, :], constraint=constraints.greater_than_eq(0))
+                        pyro.sample("latent_exposure", dist.Delta(alpha))
+
+
+    def _guide_alpha_clustering(self, init_params):
+        if not self._noise_only:
+            pi_param = pyro.param("pi_param", init_params["pi_param"], constraint=constraints.simplex)
+            pi = pyro.sample("pi", dist.Delta(pi_param).to_event(1))
+
+            alpha_prior_param = pyro.param("alpha_t_param", init_params["alpha_t_param"], constraint=constraints.greater_than_eq(0.))
+            alpha_noise_param = pyro.param("alpha_noise_param", init_params["alpha_noise"], constraint=constraints.greater_than(0.))
+
+            with pyro.plate("k1", self.k_fixed+self.k_denovo):
+                with pyro.plate("g", self.cluster):
+                    pyro.sample("alpha_t", dist.Delta(alpha_prior_param))
+
+                # if self.new_hier:
+                #     with pyro.plate("n", self.n_samples):  # rows
+                #         alpha_noise_param = pyro.param("alpha_noise_param", init_params["alpha_noise"], constraint=constraints.greater_than(0.))
+                #         alpha_noise = pyro.sample("alpha_noise", dist.Delta(alpha_noise_param))
+
+            with pyro.plate("n2", self.n_samples):
+                z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":self.enumer})
+
+                if self.new_hier:
+                    alpha_noise = pyro.sample("alpha_noise", dist.Delta(alpha_noise_param).to_event(1))
+                    pyro.sample("latent_exposure", dist.Delta(alpha_prior_param[z.long()] + alpha_noise).to_event(1))
+                else:
+                    alpha = pyro.param("alpha", lambda: alpha_prior_param[z.long()], constraint=constraints.greater_than_eq(0))
+                    pyro.sample("latent_exposure", dist.Delta(alpha).to_event(1))
+
+
+    def _guide_alpha_flat(self, init_params):
+        if not self._noise_only:
+            alpha_mean = init_params["alpha_mean"]
+
+            with pyro.plate("k", self.k_fixed+self.k_denovo):
+                with pyro.plate("n", self.n_samples):
+                    if self.enforce_sparsity:
+                        alpha = pyro.param("alpha", alpha_mean, constraint=constraints.greater_than(0.0))
+                    else:
+                        alpha = pyro.param("alpha", alpha_mean, constraint=constraints.greater_than_eq(0.0))
+                    pyro.sample("latent_exposure", dist.Delta(alpha))
+
 
 
     def _initialize_params_hier(self):
@@ -481,7 +512,7 @@ class PyBasilica():
             for fixed in beta_fixed:
                 for denovo in beta_denovo:
                     loss += torch.log(F.kl_div(torch.log(fixed), torch.log(denovo), log_target = True, reduction="batchmean"))
-            
+
             if self.regul_denovo and self.k_denovo > 1:
                 for dn1 in range(self.k_denovo):
                     for dn2 in range(dn1, self.k_denovo):
@@ -636,11 +667,11 @@ class PyBasilica():
         return param
 
 
-    def _get_alpha_hier(self):
+    def _get_alpha_hier(self, grps):
         alpha_prior = pyro.param("alpha_t_param")
         alpha = torch.zeros((self.n_samples, self.k_denovo + self.k_fixed))
         # for gid in self.groups.unique().tolist(): alpha_prior[gid] = torch.mean(, dim=0)
-        alpha = alpha_prior[self.groups]
+        alpha = alpha_prior[grps]
         # for gid in self.groups.unique().tolist():
         #     alpha[self.groups.unique() == gid, :]
         return alpha
@@ -654,9 +685,11 @@ class PyBasilica():
             elif param_name == "alpha" and self._noise_only:
                 return self._to_gpu(torch.zeros(self.n_samples, 1, dtype=torch.float64))
 
-            elif param_name == "alpha" and self.new_hier and not self._noise_only and \
-                (self.groups is not None or self.cluster is not None):
-                par = self._get_alpha_hier()
+            elif param_name == "alpha" and self.new_hier and not self._noise_only:
+                if self.groups is not None:
+                    par = self._get_alpha_hier(grps=self.groups)
+                elif self.cluster is not None:
+                    par = self._get_alpha_hier(grps=self._compute_posterior_probs())
 
             else: 
                 par = pyro.param(param_name)
@@ -748,13 +781,16 @@ class PyBasilica():
 
 
     def _compute_posterior_probs(self):
-        params = self.get_param_dict()
+        # params = self.get_param_dict()
+        pi = self._get_param("pi_param")
+        alpha_prior = self._get_param("alpha_t_param")
+        beta_denovo = self._get_param("beta_denovo")
         M = torch.tensor(self.x, dtype=torch.double)
         cluster = self.cluster
         n_samples = self.n_samples
 
-        beta = self._get_unique_beta(self.beta_fixed, self.beta_denovo)
-        alpha_prior = params["alpha_prior"]
+        beta = self._get_unique_beta(self.beta_fixed, beta_denovo)
+        # alpha_prior = params["alpha_prior"]
 
         z = torch.zeros(n_samples)
 
@@ -768,7 +804,7 @@ class PyBasilica():
                 rate = torch.matmul( mult1, beta )
 
                 # compute weighted log probability
-                ll_nk[k,:] = torch.log(params["pi"][k]) + pyro.distributions.Poisson( rate ).log_prob(m_n)
+                ll_nk[k,:] = torch.log(pi[k]) + pyro.distributions.Poisson( rate ).log_prob(m_n)
 
             ll_nk_sum = ll_nk.sum(axis=1)  # sum over the contexts -> reaches a tensor of shape (n_clusters)
 
@@ -778,7 +814,7 @@ class PyBasilica():
             best_cl = torch.argmax(probs)
             z[n] = best_cl
 
-        return z
+        return z.long()
 
 
     def _set_bic(self):
