@@ -54,28 +54,33 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
     else: raise Exception("invalid k_list datatype")
     
     kwargs = {
-            "x":x,
-            "lr":lr,
-            "n_steps":n_steps,
-            "enumer":enumer,
-            "cluster":cluster,
-            "groups":groups,
-            "beta_fixed":beta_fixed,
-            "hyperparameters":hyperparameters,
-            "compile_model":compile_model,
-            "CUDA":CUDA,
-            "enforce_sparsity":enforce_sparsity,
-            "regularizer":regularizer,
-            "reg_weight":reg_weight,
-            "reg_bic":reg_bic,
-            "store_parameters":store_parameters,
-            "stage":stage,
-            "regul_compare":regul_compare,
-            "initializ_seed":initializ_seed,
-            "initializ_pars_fit":initializ_pars_fit,
-            "new_hier":new_hier,
-            "regul_denovo":regul_denovo
+        "x":x,
+        "lr":lr,
+        "n_steps":n_steps,
+        "enumer":enumer,
+        # "cluster":cluster,
+        "groups":groups,
+        "beta_fixed":beta_fixed,
+        "hyperparameters":hyperparameters,
+        "compile_model":compile_model,
+        "CUDA":CUDA,
+        "enforce_sparsity":enforce_sparsity,
+        "regularizer":regularizer,
+        "reg_weight":reg_weight,
+        "reg_bic":reg_bic,
+        "store_parameters":store_parameters,
+        "stage":stage,
+        "regul_compare":regul_compare,
+        "initializ_seed":initializ_seed,
+        "initializ_pars_fit":initializ_pars_fit,
+        "new_hier":new_hier,
+        "regul_denovo":regul_denovo
         }
+
+    has_clusters = True
+    if cluster is None: 
+        cluster = [1]
+        has_clusters = False
 
     if verbose:
     # Verbose run
@@ -118,20 +123,23 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
             for k in k_list:
                 kwargs["k_denovo"] = k
 
-                try:
-                    obj = single_run(seed_list=seed, save_runs_seed=save_runs_seed, kwargs=kwargs)
+                for cl in list(cluster):
+                    kwargs["cluster"] = cl if has_clusters else None
 
-                    if obj.bic < minBic:
-                        minBic = obj.bic
-                        bestRun = obj
-                    if minBic == secondMinBic or (obj.bic > minBic and obj.bic < secondMinBic):
-                        secondMinBic = obj.bic
-                        secondBest = obj
-                except:
-                    raise Exception("Failed to run for k_denovo:{k}!")
+                    try:
+                        obj = single_run(seed_list=seed, save_runs_seed=save_runs_seed, kwargs=kwargs)
+
+                        if obj.bic < minBic:
+                            minBic = obj.bic
+                            bestRun = obj
+                        if minBic == secondMinBic or (obj.bic > minBic and obj.bic < secondMinBic):
+                            secondMinBic = obj.bic
+                            secondBest = obj
+                    except:
+                        raise Exception("Failed to run for k_denovo:{k}!")
                 
-                # scores_k["K_"+str(k)] = {"bic":obj.bic, "llik":obj.likelihood}
-                scores_k["K_"+str(k)] = obj.runs_scores
+                    # scores_k["K_"+str(k)] = {"bic":obj.bic, "llik":obj.likelihood}
+                    scores_k["K_"+str(k)+".G_"+str(cl)] = obj.runs_scores
                 
                 progress.console.print(f"Running on k_denovo={k} | BIC={obj.bic}")
                 progress.update(task, advance=1)
@@ -164,24 +172,27 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
         for k in k_list:
             kwargs["k_denovo"] = k
 
-            try:
-                obj = single_run(seed_list=seed, save_runs_seed=save_runs_seed, kwargs=kwargs)
+            for cl in list(cluster):
+                kwargs["cluster"] = cl if has_clusters else None
 
-                if obj.bic < minBic:
-                    minBic = obj.bic
-                    bestRun = obj
-                    if k == k_list[0] and len(k_list)>1:
+                try:
+                    obj = single_run(seed_list=seed, save_runs_seed=save_runs_seed, kwargs=kwargs)
+
+                    if obj.bic < minBic:
+                        minBic = obj.bic
+                        bestRun = obj
+                        if k == k_list[0] and len(k_list)>1:
+                            secondMinBic = obj.bic
+                            secondBest = obj
+
+                    if obj.bic > minBic and obj.bic < secondMinBic and len(k_list)>1:
                         secondMinBic = obj.bic
                         secondBest = obj
+                except:
+                    raise Exception("Failed to run for k_denovo:{k}!")
 
-                if obj.bic > minBic and obj.bic < secondMinBic and len(k_list)>1:
-                    secondMinBic = obj.bic
-                    secondBest = obj
-            except:
-                raise Exception("Failed to run for k_denovo:{k}!")
-
-            # scores_k["K_"+str(k)] = {"bic":obj.bic, "llik":obj.likelihood}
-            scores_k["K_"+str(k)] = obj.runs_scores
+                # scores_k["K_"+str(k)] = {"bic":obj.bic, "llik":obj.likelihood}
+                scores_k["K_"+str(k)+".G_"+str(cl)] = obj.runs_scores
 
         if bestRun is not None:
             bestRun.convert_to_dataframe(x, beta_fixed)
