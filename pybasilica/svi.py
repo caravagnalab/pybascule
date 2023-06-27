@@ -685,7 +685,7 @@ class PyBasilica():
             elif param_name == "alpha" and self._noise_only:
                 return self._to_gpu(torch.zeros(self.n_samples, 1, dtype=torch.float64))
 
-            elif param_name == "alpha" and self.new_hier and not self._noise_only:
+            elif param_name == "alpha" and self.new_hier and not self._noise_only and (self.groups is not None or self.cluster is not None):
                 if self.groups is not None:
                     par = self._get_alpha_hier(grps=self.groups)
                 elif self.cluster is not None:
