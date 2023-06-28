@@ -18,6 +18,9 @@ def single_run(seed_list, save_runs_seed, kwargs):
     scores = dict()
 
     for seed in seed_list:
+        print("Running model with " + str(kwargs["k_denovo"]) + \
+              " signatures, " + str(kwargs["cluster"]) + " groups and " + str(seed) + " seed\n")
+
         obj = PyBasilica(seed=seed, **kwargs)
         obj._fit()
 
@@ -46,13 +49,16 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
     if isinstance(seed, int):
         seed = [seed]
 
+    if isinstance(cluster, int):
+        cluster = [cluster]
+
     if isinstance(k_list, list):
         if len(k_list) > 0: pass
         else: raise Exception("k_list is an empty list!")
     elif isinstance(k_list, int):
         k_list = [k_list]
     else: raise Exception("invalid k_list datatype")
-    
+
     kwargs = {
         "x":x,
         "lr":lr,
