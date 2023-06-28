@@ -202,12 +202,15 @@ class PyBasilica():
                     alpha_prior = pyro.sample("alpha_t", dist.HalfNormal(self.hyperparameters["alpha_prior_var"]))
 
             # sample from the alpha prior
+            # alpha_noise = torch.zeros((self.n_samples, self.k_fixed + self.k_denovo))
             with pyro.plate("k", self.k_fixed + self.k_denovo):  # columns
                 with pyro.plate("n", self.n_samples):  # rows
-                    alpha_noise = pyro.sample("alpha_noise", dist.HalfNormal(self.hyperparameters["alpha_noise_var"]))
-                    alpha = pyro.sample("latent_exposure", dist.Normal(alpha_prior[self.groups,:], self.hyperparameters["alpha_var"]))
+                    if self.new_hier: 
+                        alpha_noise = pyro.sample("alpha_noise", dist.HalfNormal(self.hyperparameters["alpha_noise_var"]))
+                        alpha = pyro.sample("latent_exposure", dist.Normal(alpha_prior[self.groups,:], alpha_noise))
+                    else:
+                        alpha = pyro.sample("latent_exposure", dist.Normal(alpha_prior[self.groups,:], self.hyperparameters["alpha_var"]))
 
-            alpha = alpha + alpha_noise
             alpha = alpha / (torch.sum(alpha, 1).unsqueeze(-1))
             alpha = torch.clamp(alpha, 0, 1)
         
@@ -269,6 +272,7 @@ class PyBasilica():
 
         alpha_var = self.hyperparameters["alpha_var"]
         alpha_prior_var = self.hyperparameters["alpha_prior_var"]
+        alpha_noise_var = self.hyperparameters["alpha_noise_var"]
 
         # Alpha
         if groups is not None:
@@ -295,7 +299,11 @@ class PyBasilica():
         with pyro.plate("n2", n_samples):
             if cluster is not None:
                 z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":enumer})
-                alpha = pyro.sample("latent_exposure", dist.Normal(alpha_prior[z], alpha_var).to_event(1))
+                if self.new_hier: 
+                    alpha_noise = pyro.sample("alpha_noise", dist.HalfNormal(torch.ones(k_fixed+k_denovo)*alpha_noise_var).to_event(1))
+                    alpha = pyro.sample("latent_exposure", dist.Normal(alpha_prior[z], alpha_noise).to_event(1))
+                else:
+                    alpha  = pyro.sample("latent_exposure", dist.Normal(alpha_prior[z], alpha_var).to_event(1))
 
             a = torch.matmul(torch.matmul(torch.diag(torch.sum(self.x, axis=1)), alpha), beta)
 
@@ -372,11 +380,6 @@ class PyBasilica():
             with pyro.plate("k1", self.k_fixed+self.k_denovo):
                 with pyro.plate("g", self.cluster):
                     pyro.sample("alpha_t", dist.Delta(alpha_prior_param))
-
-                # if self.new_hier:
-                #     with pyro.plate("n", self.n_samples):  # rows
-                #         alpha_noise_param = pyro.param("alpha_noise_param", init_params["alpha_noise"], constraint=constraints.greater_than(0.))
-                #         alpha_noise = pyro.sample("alpha_noise", dist.Delta(alpha_noise_param))
 
             with pyro.plate("n2", self.n_samples):
                 z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":self.enumer})
