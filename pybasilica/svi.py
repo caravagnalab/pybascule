@@ -94,7 +94,8 @@ class PyBasilica():
         if groups is None and cluster is None:
             self.new_hier = False
         self.enumer = enumer
-        self.cluster = None if cluster == 1 else cluster
+        self.cluster = cluster
+        # self.cluster = None if cluster == 1 else cluster
         if self.cluster is not None: self.cluster = int(self.cluster)
         self._set_groups(groups)
 
