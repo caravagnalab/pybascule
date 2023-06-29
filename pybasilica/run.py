@@ -24,7 +24,8 @@ def single_run(seed_list, save_runs_seed, kwargs):
         obj = PyBasilica(seed=seed, **kwargs)
         obj._fit()
 
-        scores["seed_"+str(seed)] = {"bic":obj.bic, "llik":obj.likelihood}
+        scores["seed_"+str(seed)] = {"bic":obj.bic, "llik":obj.likelihood, "reg_llik":obj.reg_likelihood}
+        # scores["seed_"+str(seed)] = {"bic":obj.bic, "llik":obj.likelihood}
 
         if bestRun is None or obj.bic < minBic:
             minBic = obj.bic
@@ -180,6 +181,9 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
 
             for cl in list(cluster):
                 kwargs["cluster"] = cl if has_clusters else None
+
+            # kwargs["cluster"] = None
+            # cl = 1
 
                 try:
                     obj = single_run(seed_list=seed, save_runs_seed=save_runs_seed, kwargs=kwargs)
