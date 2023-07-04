@@ -890,7 +890,10 @@ class PyBasilica():
         # params = self.get_param_dict()
         pi = self._get_param("pi_param", to_cpu=to_cpu)
         alpha_prior = self._get_param("alpha_t_param", to_cpu=to_cpu, normalize=False)  # G x K
-        alpha_noise = self._get_param("alpha_noise_param", to_cpu=to_cpu, normalize=False)  if self.new_hier else torch.zeros(self.n_samples, self.k_denovo + self.k_fixed)
+        if self.new_hier:
+            alpha_noise = self._get_param("alpha_noise_param", to_cpu=to_cpu, normalize=False) 
+        else:
+            alpha_noise = self._to_cpu(torch.zeros(self.n_samples, self.k_denovo + self.k_fixed), move=to_cpu)
         beta_denovo = self._get_param("beta_denovo", to_cpu=to_cpu)
         M = torch.tensor(self.x, dtype=torch.double)
         cluster = self.cluster
