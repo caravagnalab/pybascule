@@ -43,8 +43,8 @@ def single_run(seed_list, save_runs_seed, kwargs):
 
 
 def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluster=None, groups=None, beta_fixed=None, hyperparameters=None,
-        compile_model = False, CUDA = False, enforce_sparsity = False, regularizer = "cosine", reg_weight = 1, reg_bic = False,
-        store_parameters=False, verbose=True, stage = "random_noise", regul_compare = None, seed = 10, initializ_seed = True, 
+        compile_model = False, CUDA = False, enforce_sparsity = False, regularizer = "cosine", reg_weight = 0., reg_bic = False,
+        store_parameters=False, verbose=True, stage = "", regul_compare = None, seed = 10, initializ_seed = False, 
         save_runs_seed = False, initializ_pars_fit = False, new_hier = False, regul_denovo = True, nonparametric=False):
 
     if isinstance(seed, int):
@@ -89,6 +89,9 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
     if cluster is None: 
         cluster = [1]
         has_clusters = False
+    
+    elif nonparametric and isinstance(cluster, list):
+        cluster = [max(cluster)]
 
     if verbose:
     # Verbose run
