@@ -260,13 +260,14 @@ class PyBasilica():
                         # alpha_prior = pyro.sample("alpha_t", dist.Exponential(alpha_prior_var))
                         alpha_prior = pyro.sample("alpha_t", dist.Beta(alpha_conc1, alpha_conc0))
                     else:
-                        alpha_prior = pyro.sample("alpha_t", dist.HalfNormal(alpha_p_sigma))
+                        # alpha_prior = pyro.sample("alpha_t", dist.HalfNormal(alpha_p_sigma))
+                        alpha_prior = pyro.sample("alpha_t", dist.HalfCauchy(torch.tensor(alpha_p_sigma, dtype=torch.float64)))
 
             alpha_prior = self._norm_and_clamp(alpha_prior)
 
             q_01 = alpha_prior - alpha_sigma * alpha_prior
             q_99 = alpha_prior + alpha_sigma * alpha_prior
-            alpha_sigma_corr = (q_99 - q_01) / (2 * dist.Normal(alpha_prior, 1).icdf(torch.tensor(0.95)))
+            alpha_sigma_corr = (q_99 - q_01) / (2 * dist.Normal(alpha_prior, 1).icdf(torch.tensor(0.99)))
 
         else:
             if not self._noise_only:
@@ -275,7 +276,8 @@ class PyBasilica():
                         if self.enforce_sparsity:
                             alpha = pyro.sample("latent_exposure", dist.Exponential(alpha_rate))
                         else:
-                            alpha = pyro.sample("latent_exposure", dist.HalfNormal(alpha_sigma))
+                            # alpha = pyro.sample("latent_exposure", dist.HalfCauchy(torch.tensor(alpha_sigma, dtype=torch.float64)))
+                            alpha = pyro.sample("latent_exposure", dist.HalfNormal(torch.tensor(alpha_sigma, dtype=torch.float64)))
 
                 alpha = alpha / (torch.sum(alpha, -1).unsqueeze(-1))
 
@@ -309,7 +311,8 @@ class PyBasilica():
                 if self.new_hier: 
                     alpha = alpha_prior[z] + r_noise
                 else:
-                    alpha  = pyro.sample("latent_exposure", dist.Normal(alpha_prior[z], alpha_sigma_corr[z]).to_event(1))
+                    alpha  = pyro.sample("latent_exposure", dist.Cauchy(alpha_prior[z], alpha_sigma_corr[z]).to_event(1))
+                    # alpha  = pyro.sample("latent_exposure", dist.Normal(alpha_prior[z], alpha_sigma_corr[z]).to_event(1))
 
                 alpha = self._norm_and_clamp(alpha)
             a = torch.matmul(torch.matmul(torch.diag(torch.sum(self.x, axis=1)), alpha), beta)
