@@ -87,7 +87,7 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
 
     has_clusters = True
     if cluster is None: 
-        cluster = [1]
+        # cluster = [1]
         has_clusters = False
     
     elif nonparametric and isinstance(cluster, list):

@@ -8,6 +8,7 @@ from pyro.optim import Adam
 import pyro.distributions.constraints as constraints
 import pyro.distributions as dist
 import torch.nn.functional as F
+import scipy.stats
 
 from tqdm import trange
 from logging import warning
@@ -422,6 +423,10 @@ class PyBasilica():
 
             alpha_prior = self._norm_and_clamp(alpha_prior)
 
+            q_05 = alpha_prior - alpha_sigma * alpha_prior
+            q_95 = alpha_prior + alpha_sigma * alpha_prior
+            alpha_sigma_corr = (q_95 - q_05) / (2 * dist.Normal(alpha_prior, 1).icdf(torch.tensor(0.95)))
+
         else:
             if self._noise_only:
                 alpha = torch.zeros(self.n_samples, 1, dtype=torch.float64)
@@ -469,16 +474,19 @@ class PyBasilica():
 
                     alpha = alpha_prior[z] + r_noise
                 else:
-                    alpha  = pyro.sample("latent_exposure", dist.Normal(alpha_prior[z], alpha_sigma).to_event(1))
+                    alpha  = pyro.sample("latent_exposure", dist.Normal(alpha_prior[z], alpha_sigma_corr[z]).to_event(1))
 
             alpha = self._norm_and_clamp(alpha)
             a = torch.matmul(torch.matmul(torch.diag(torch.sum(self.x, axis=1)), alpha), beta)
             if self.stage == "random_noise": a = a + epsilon
-            pyro.sample("loss", dist.Poisson(a).to_event(1), obs=self.x)
 
-            # lk =  dist.Poisson(a).log_prob(self.x)
-            # lk_sum = lk.sum()
-            # pyro.factor("loss", lk_sum + self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1]))
+            pyro.sample("obs", dist.Poisson(a).to_event(1), obs=self.x)
+            
+            if self.reg_weight > 0:
+                # lk =  dist.Poisson(a).log_prob(self.x)
+                # lk_sum = lk.sum()
+                # pyro.factor("loss", lk_sum + self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1]))
+                pyro.factor("loss", self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1]))
 
 
     def guide(self):
@@ -525,6 +533,8 @@ class PyBasilica():
                 with pyro.plate("k1", self.k_fixed + self.k_denovo):
                     with pyro.plate("g", self.cluster):
                         pyro.sample("alpha_t", dist.Delta(alpha_prior_param))
+
+                alpha_prior_param = self._norm_and_clamp(alpha_prior_param)
 
                 # if self.new_hier:
                 #     # alpha_noise_param = pyro.param("alpha_noise_param", lambda: init_params["alpha_noise_param"], constraint=constraints.greater_than(0.))
@@ -658,8 +668,8 @@ class PyBasilica():
                                                   alpha_noise_sigma).sample()
 
         if self.cluster is not None:
-            # params["pi_param"] = torch.ones(self.cluster, dtype=torch.float64)
-            params["pi_param"] = dist.Dirichlet(1 / self.cluster * torch.ones(self.cluster, dtype=torch.float64)).sample()
+            params["pi_param"] = torch.ones(self.cluster, dtype=torch.float64)
+            # params["pi_param"] = dist.Dirichlet(1 / self.cluster * torch.ones(self.cluster, dtype=torch.float64)).sample()
             if self.enforce_sparsity:
                 # params["alpha_prior_param"] = dist.Exponential(torch.ones(self.cluster, self.k_fixed + self.k_denovo, dtype=torch.float64) *
                 #                                                alpha_p_sigma).sample()
