@@ -496,6 +496,7 @@ class PyBasilica():
 
 
     def run_kmeans(self, X, G, seed):
+        X = self._to_cpu(X, move=True)
         try:
             km = KMeans(n_clusters=G, random_state=seed).fit(X.numpy())
         
@@ -561,10 +562,10 @@ class PyBasilica():
         self._fit(set_attributes=False)
 
         alpha = self._get_param("alpha", normalize=False, to_cpu=False)
-        km = self._initialize_weights(X=alpha, G=cluster_true)
-        pi = torch.tensor([(np.where(km.labels_ == k)[0].shape[0]) / self.n_samples for k in range(km.n_clusters)])
+        km = self._initialize_weights(X=alpha.clone(), G=cluster_true)
+        pi_km = torch.tensor([(np.where(km.labels_ == k)[0].shape[0]) / self.n_samples for k in range(km.n_clusters)])
         groups_kmeans = torch.tensor(km.labels_)
-        alpha_prior = torch.tensor(km.cluster_centers_)
+        alpha_prior_km = torch.tensor(km.cluster_centers_)
 
         # alpha_prior = torch.zeros((cluster_true, self.K))
         # for gid in torch.unique(groups_kmeans):
@@ -581,6 +582,8 @@ class PyBasilica():
         #     alpha_prior[gid] = torch.mean(alpha_g, dim=0)
         #     # alpha_prior[gid] = dist.Normal(alpha_g, dtype=torch.float64)
 
+        pi = self._to_gpu(pi_km, move=True)
+        alpha_prior = self._to_gpu(alpha_prior_km, move=True)
         alpha_noise_sigma, eps_sigma, beta_d_sigma = self.hyperparameters["alpha_noise_sigma"], self.hyperparameters["eps_sigma"], self.hyperparameters["beta_d_sigma"]
         # alpha_noise = alpha_noise = dist.Normal(0, torch.ones(n_samples_true, self.K, dtype=torch.float64) * alpha_noise_sigma).sample()
         if self.stage == "random_noise": epsilon = torch.ones(n_samples_true, self.contexts, dtype=torch.float64) * eps_sigma
@@ -659,7 +662,6 @@ class PyBasilica():
 
             if self.cluster is not None:
                 self.init_params = self._initialize_params_clustering()
-                print(self.init_params["alpha_prior_param"])
             else:
                 self.init_params = self._initialize_params_nonhier()
 
@@ -865,7 +867,7 @@ class PyBasilica():
 
         probs = torch.exp(ll_k - ll)
         z = torch.argmax(probs, dim=0)
-        return z.long(), probs
+        return self._to_cpu(z.long(), move=to_cpu), self._to_cpu(probs, move=to_cpu)
 
 
     def _norm_and_clamp(self, par):
