@@ -44,7 +44,7 @@ def single_run(seed_list, save_runs_seed, kwargs):
 
 def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluster=None, groups=None, beta_fixed=None, hyperparameters=None,
         compile_model = False, CUDA = False, enforce_sparsity = False, regularizer = "cosine", reg_weight = 0., reg_bic = False,
-        store_parameters=False, verbose=True, stage = "", regul_compare = None, seed = 10, initializ_seed = False, 
+        store_parameters=False, verbose=True, stage = "", regul_compare = None, seed = 10, initializ_seed = False, save_all_fits=False,
         save_runs_seed = False, initializ_pars_fit = False, new_hier = False, regul_denovo = True, nonparametric=False):
 
     if isinstance(seed, int):
@@ -130,7 +130,7 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
             secondMinBic = maxsize
             bestRun, secondBest = None, None
 
-            scores_k = dict()
+            scores_k, all_fits_stored = dict(), dict()
             for k in k_list:
                 kwargs["k_denovo"] = k
 
@@ -151,6 +151,9 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
                 
                     # scores_k["K_"+str(k)] = {"bic":obj.bic, "llik":obj.likelihood}
                     scores_k["K_"+str(k)+".G_"+str(cl)] = obj.runs_scores
+                    if save_all_fits:
+                        # obj.convert_to_dataframe(x, beta_fixed)
+                        all_fits_stored["K_"+str(k)+".G_"+str(cl)] = obj
                 
                 progress.console.print(f"Running on k_denovo={k} | BIC={obj.bic}")
                 progress.update(task, advance=1)
@@ -179,7 +182,7 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
         secondMinBic = maxsize
         bestRun, secondBest = None, None
 
-        scores_k = dict()
+        scores_k, all_fits_stored = dict(), dict()
         for k in k_list:
             kwargs["k_denovo"] = k
 
@@ -195,18 +198,28 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
                     if obj.bic < minBic:
                         minBic = obj.bic
                         bestRun = obj
-                        if k == k_list[0] and len(k_list)>1:
-                            secondMinBic = obj.bic
-                            secondBest = obj
-
-                    if obj.bic > minBic and obj.bic < secondMinBic and len(k_list)>1:
+                    if minBic == secondMinBic or (obj.bic > minBic and obj.bic < secondMinBic):
                         secondMinBic = obj.bic
                         secondBest = obj
+
+                    # if obj.bic < minBic:
+                    #     minBic = obj.bic
+                    #     bestRun = obj
+                    #     if k == k_list[0] and len(k_list)>1:
+                    #         secondMinBic = obj.bic
+                    #         secondBest = obj
+
+                    # if obj.bic > minBic and obj.bic < secondMinBic and len(k_list)>1:
+                    #     secondMinBic = obj.bic
+                    #     secondBest = obj
                 except:
                     raise Exception("Failed to run for k_denovo:{k}!")
 
                 # scores_k["K_"+str(k)] = {"bic":obj.bic, "llik":obj.likelihood}
                 scores_k["K_"+str(k)+".G_"+str(cl)] = obj.runs_scores
+                if save_all_fits:
+                    # obj.convert_to_dataframe(x, beta_fixed)
+                    all_fits_stored["K_"+str(k)+".G_"+str(cl)] = obj
 
         if bestRun is not None:
             bestRun.convert_to_dataframe(x, beta_fixed)
@@ -215,6 +228,7 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
             secondBest.convert_to_dataframe(x, beta_fixed)
 
     bestRun.scores_K = scores_k
+    bestRun.all_fits = all_fits_stored
 
     return bestRun, secondBest
 
