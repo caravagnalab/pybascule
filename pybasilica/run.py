@@ -45,7 +45,7 @@ def single_run(seed_list, save_runs_seed, kwargs):
 def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluster=None, groups=None, beta_fixed=None, hyperparameters=None,
         compile_model = False, CUDA = False, enforce_sparsity = False, regularizer = "cosine", reg_weight = 0., reg_bic = False,
         store_parameters=False, verbose=True, stage = "", regul_compare = None, seed = 10, initializ_seed = False, save_all_fits=False,
-        save_runs_seed = False, initializ_pars_fit = False, new_hier = False, regul_denovo = True, nonparametric=False):
+        save_runs_seed = False, initializ_pars_fit = False, new_hier = False, regul_denovo = True, nonparametric=False, do_initial_fit=False):
 
     if isinstance(seed, int):
         seed = [seed]
@@ -82,7 +82,7 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
         "initializ_pars_fit":initializ_pars_fit,
         "new_hier":new_hier,
         "regul_denovo":regul_denovo,
-        "nonparam":nonparametric
+        "nonparam":nonparametric,
         }
 
     has_clusters = True
@@ -133,6 +133,12 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
             scores_k, all_fits_stored = dict(), dict()
             for k in k_list:
                 kwargs["k_denovo"] = k
+
+                if has_clusters and do_initial_fit:
+                    kwargs_init = {key: value for key, value in kwargs.items()}
+                    kwargs_init["cluster"], kwargs_init["hyperparameters"], kwargs_init["enforce_sparsity"] = None, None, False
+                    obj_init = single_run(seed_list=seed, save_runs_seed=False, kwargs=kwargs_init)
+                    kwargs["initial_fit"] = obj_init
 
                 for cl in list(cluster):
                     kwargs["cluster"] = cl if has_clusters else None
@@ -189,8 +195,11 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
             for cl in list(cluster):
                 kwargs["cluster"] = cl if has_clusters else None
 
-            # kwargs["cluster"] = None
-            # cl = 1
+                if has_clusters and do_initial_fit:
+                    kwargs_init = {key: value for key, value in kwargs.items()}
+                    kwargs_init["cluster"], kwargs_init["hyperparameters"], kwargs_init["enforce_sparsity"] = None, None, False
+                    obj_init = single_run(seed_list=seed, save_runs_seed=False, kwargs=kwargs_init)
+                    kwargs["initial_fit"] = obj_init
 
                 try:
                     obj = single_run(seed_list=seed, save_runs_seed=save_runs_seed, kwargs=kwargs)
@@ -202,16 +211,6 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
                         secondMinBic = obj.bic
                         secondBest = obj
 
-                    # if obj.bic < minBic:
-                    #     minBic = obj.bic
-                    #     bestRun = obj
-                    #     if k == k_list[0] and len(k_list)>1:
-                    #         secondMinBic = obj.bic
-                    #         secondBest = obj
-
-                    # if obj.bic > minBic and obj.bic < secondMinBic and len(k_list)>1:
-                    #     secondMinBic = obj.bic
-                    #     secondBest = obj
                 except:
                     raise Exception("Failed to run for k_denovo:{k}!")
 
