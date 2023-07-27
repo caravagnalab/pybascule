@@ -265,8 +265,8 @@ class PyBasilica():
             
             alpha_prior = self._norm_and_clamp(alpha_prior)
 
-            q_01 = alpha_prior - alpha_sigma * alpha_prior
-            q_99 = alpha_prior + alpha_sigma * alpha_prior
+            q_01 = alpha_prior - alpha_sigma # * alpha_prior
+            q_99 = alpha_prior + alpha_sigma # * alpha_prior
             alpha_sigma_corr = (q_99 - q_01) / (2 * dist.Normal(alpha_prior, 1).icdf(torch.tensor(0.99)))  # good clustering
 
         else:
@@ -772,8 +772,9 @@ class PyBasilica():
         self.gradient_norms = dict(gradient_norms) if gradient_norms is not None else None
         self.regs = regs
         self._set_params()
-        self._set_bic()
         self.likelihood = self._likelihood(self.x, self.alpha, self.beta_fixed, self.beta_denovo, self.eps_sigma)
+        self._set_bic()
+        self._set_aic()
 
         reg = self._regularizer(self.beta_fixed, self.beta_denovo, reg_type=self.regularizer)
         self.reg_likelihood = self.likelihood + self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1])
@@ -975,28 +976,46 @@ class PyBasilica():
 
 
     def _set_bic(self):
-        M = self.x
-        alpha = self.alpha
+        # M = self.x
+        # alpha = self.alpha
 
-        _log_like = self._likelihood(M, alpha, self.beta_fixed, self.beta_denovo, self.eps_sigma)
-
+        # _log_like = self._likelihood(M, alpha, self.beta_fixed, self.beta_denovo, self.eps_sigma)
+        
+        _log_like = self.likelihood
         # adding regularizer
         if self.reg_weight != 0 and self.reg_bic:
             reg = self._regularizer(self.beta_fixed, self.beta_denovo, reg_type = self.regularizer)
             _log_like += self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1])
 
         k = self._number_of_params() 
-        n = M.shape[0] * M.shape[1]
+        n = self.n_samples
         bic = k * torch.log(torch.tensor(n, dtype=torch.float64)) - (2 * _log_like)
 
         self.bic = bic.item()
 
+    def _set_aic(self):
+        # M = self.x
+        # alpha = self.alpha
+
+        # _log_like = self._likelihood(M, alpha, self.beta_fixed, self.beta_denovo, self.eps_sigma)
+
+        _log_like = self.likelihood
+        # adding regularizer
+        if self.reg_weight != 0 and self.reg_bic:
+            reg = self._regularizer(self.beta_fixed, self.beta_denovo, reg_type = self.regularizer)
+            _log_like += self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1])
+
+        k = self._number_of_params() 
+        self.aic = 2*k - 2*_log_like
+
 
     def _number_of_params(self):
+        k = 0
         if self.k_denovo == 0 and torch.sum(self.beta_fixed) == 0:
             k = 0
         else:
-            k = self.k_denovo * self.contexts # beta denovo
+            if self.initial_fit is None and not self.new_hier:
+                k += self.k_denovo * self.contexts # beta denovo
 
         if self.cluster is not None:
             k += self.params["pi"].numel()  # mixing proportions
@@ -1006,12 +1025,13 @@ class PyBasilica():
 
         if self.new_hier:
             k += self.params["alpha_prior"].numel()
-            if self.params["alpha_noise"] is not None:
-                k += self.params["alpha_noise"].numel() # alpha if noise is learned
+            # if self.params["alpha_noise"] is not None:
+            #     k += self.params["alpha_noise"].numel() # alpha if noise is learned
         else:
             if self.params["alpha_prior"] is not None:
                 k += self.params["alpha_prior"].numel()
-            k += self.params["alpha"].numel()  # alpha if no noise is learned
+            if not self.new_hier:
+                k += self.params["alpha"].numel()  # alpha if no noise is learned
 
         print("N parameters", k)
         return k
