@@ -48,6 +48,7 @@ class PyBasilica():
         initializ_pars_fit = False,
         new_hier = False,
         regul_denovo = True,
+        regul_fixed = True,
         nonparam = False,
         initial_fit = None
         ):
@@ -55,6 +56,7 @@ class PyBasilica():
         self._hyperpars_default = {"alpha_sigma":1., "alpha_p_sigma":1., "alpha_p_conc0":0.6, "alpha_p_conc1":0.6, "alpha_rate":5, 
                                    "beta_d_sigma":1, "eps_sigma":10, "alpha_noise_sigma":0.01, "pi_conc0":0.6}
         self.regul_denovo = regul_denovo
+        self.regul_fixed = regul_fixed
         self.new_hier = new_hier
         self.initial_fit = initial_fit
 
@@ -509,7 +511,7 @@ class PyBasilica():
         self._init_km = km
 
         return km
-    
+
 
     def _run_initial_fit(self):
 
@@ -550,7 +552,7 @@ class PyBasilica():
         else:
             alpha = self._to_gpu(self.initial_fit.alpha_unn, move=True)
             if self.new_hier: beta_dn = self._to_gpu(self.initial_fit.beta_denovo, move=True)
-        
+
         if not self.new_hier: beta_dn = dist.HalfNormal(torch.ones(self.k_denovo, self.contexts, dtype=torch.float64) * beta_d_sigma).sample()
 
         km = self._initialize_weights(X=alpha.clone(), G=self.cluster)
@@ -648,9 +650,10 @@ class PyBasilica():
         beta_fixed[beta_fixed==0] = 1e-07
 
         if reg_type == "cosine":
-            for fixed in beta_fixed:
-                for denovo in beta_denovo:
-                    loss += torch.log((1 - F.cosine_similarity(fixed, denovo, dim = -1)))
+            if self.regul_fixed:
+                for fixed in beta_fixed:
+                    for denovo in beta_denovo:
+                        loss += torch.log((1 - F.cosine_similarity(fixed, denovo, dim = -1)))
 
             if self.regul_denovo and self.k_denovo > 1:
                 for dn1 in range(self.k_denovo):
@@ -659,9 +662,10 @@ class PyBasilica():
                         loss += torch.log((1 - F.cosine_similarity(beta_denovo[dn1,], beta_denovo[dn2,], dim = -1)))
 
         elif reg_type == "KL":
-            for fixed in beta_fixed:
-                for denovo in beta_denovo:
-                    loss += torch.log(F.kl_div(torch.log(fixed), torch.log(denovo), log_target = True, reduction="batchmean"))
+            if self.regul_fixed:
+                for fixed in beta_fixed:
+                    for denovo in beta_denovo:
+                        loss += torch.log(F.kl_div(torch.log(fixed), torch.log(denovo), log_target = True, reduction="batchmean"))
 
             if self.regul_denovo and self.k_denovo > 1:
                 for dn1 in range(self.k_denovo):
@@ -1006,7 +1010,12 @@ class PyBasilica():
             _log_like += self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1])
 
         k = self._number_of_params() 
-        self.aic = 2*k - 2*_log_like
+        aic = 2*k - 2*_log_like
+
+        if (isinstance(aic, torch.Tensor)):
+            self.aic = aic.item()
+        else:
+            self.aic = aic
 
 
     def _number_of_params(self):
