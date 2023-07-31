@@ -24,7 +24,7 @@ def single_run(seed_list, save_runs_seed, kwargs):
         obj = PyBasilica(seed=seed, **kwargs)
         obj._fit()
 
-        scores["seed_"+str(seed)] = {"bic":obj.bic, "aic":obj.aic, "llik":obj.likelihood, "reg_llik":obj.reg_likelihood}
+        scores["seed_"+str(seed)] = {"bic":obj.bic, "aic":obj.aic, "icl":obj.icl, "llik":obj.likelihood, "reg_llik":obj.reg_likelihood}
         # scores["seed_"+str(seed)] = {"bic":obj.bic, "llik":obj.likelihood}
 
         if bestRun is None or obj.bic < minBic:
