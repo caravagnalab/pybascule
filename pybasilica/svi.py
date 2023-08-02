@@ -472,7 +472,7 @@ class PyBasilica():
         tmp, indexes, count = np.unique(a, axis=0, return_counts=True, return_index=True)
         repeated_groups = tmp[count > 1].tolist()
 
-        unq = torch.from_numpy(np.array([a[index] for index in sorted(indexes)]))
+        unq = np.array([a[index] for index in sorted(indexes)])
 
         removed_idx = {}
         for i, repeated_group in enumerate(repeated_groups):
@@ -490,9 +490,9 @@ class PyBasilica():
             km = KMeans(n_clusters=G, random_state=seed).fit(X.numpy())
         
         except:
-            removed_idx, data_unq = self.check_input_kmeans(X)
+            removed_idx, data_unq = self.check_input_kmeans(X.numpy())
 
-            km = KMeans(n_clusters=G, random_state=seed).fit(data_unq.numpy())
+            km = KMeans(n_clusters=G, random_state=seed).fit(data_unq)
             assert km.n_iter_ < km.max_iter
 
             clusters = km.labels_
