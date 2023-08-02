@@ -30,7 +30,7 @@ class PyBasilica():
         n_steps,
         enumer = "parallel",
         cluster = None,
-        hyperparameters = {"alpha_sigma":0.05, "alpha_p_sigma":1., "alpha_p_conc0":0.6, "alpha_p_conc1":0.6, "alpha_rate":5, 
+        hyperparameters = {"alpha_sigma":0.1, "alpha_p_sigma":1., "alpha_p_conc0":0.6, "alpha_p_conc1":0.6, "alpha_rate":5, 
                            "beta_d_sigma":1, "eps_sigma":10, "alpha_noise_sigma":0.01, "pi_conc0":0.6},
         groups = None,
         beta_fixed = None,
@@ -267,9 +267,14 @@ class PyBasilica():
             
             alpha_prior = self._norm_and_clamp(alpha_prior)
 
-            q_01 = alpha_prior - alpha_sigma # * alpha_prior
-            q_99 = alpha_prior + alpha_sigma # * alpha_prior
-            alpha_sigma_corr = (q_99 - q_01) / (2 * dist.Normal(alpha_prior, 1).icdf(torch.tensor(0.99)))  # good clustering
+            q05 = alpha_prior - alpha_sigma # * alpha_prior
+            q95 = alpha_prior + alpha_sigma # * alpha_prior
+            # alpha_sigma_corr = (q_99 - q_01) / (2 * dist.Normal(alpha_prior, 1).icdf(torch.tensor(0.99)))  # good clustering
+            # alpha_sigma_corr = (q95 - q05) / ( dist.Cauchy(alpha_prior, 1).icdf(torch.tensor(1-0.05/2)) -\
+            #                                    dist.Cauchy(alpha_prior, 1).icdf(torch.tensor(0.05/2)) )  # good clustering
+            
+            alpha_sigma_corr = (q95 - q05) / ( dist.Normal(alpha_prior, 1).icdf(torch.tensor(1-0.05/2)) -\
+                                               dist.Normal(alpha_prior, 1).icdf(torch.tensor(0.05/2)) )  # good clustering
 
         else:
             if not self._noise_only:
@@ -314,8 +319,8 @@ class PyBasilica():
                 if self.new_hier: 
                     alpha = self._get_param("alpha")
                 else:
-                    alpha  = pyro.sample("latent_exposure", dist.Cauchy(alpha_prior[z], alpha_sigma_corr[z]).to_event(1))  # good clustering
-                    # alpha  = pyro.sample("latent_exposure", dist.Normal(alpha_prior[z], alpha_sigma_corr[z]).to_event(1))
+                    # alpha  = pyro.sample("latent_exposure", dist.Cauchy(alpha_prior[z], alpha_sigma_corr[z]).to_event(1))  # good clustering
+                    alpha  = pyro.sample("latent_exposure", dist.Normal(alpha_prior[z], alpha_sigma_corr[z]).to_event(1))
 
                 alpha = self._norm_and_clamp(alpha)
 
@@ -1030,6 +1035,8 @@ class PyBasilica():
 
 
     def _number_of_params(self):
+        if self.groups is not None:
+            n_grps = len(np.unique(np.array(self.groups)))
         k = 0
         if self.k_denovo == 0 and torch.sum(self.beta_fixed) == 0:
             k = 0
@@ -1038,18 +1045,21 @@ class PyBasilica():
                 k += self.k_denovo * self.contexts # beta denovo
 
         if self.cluster is not None:
-            k += self.params["pi"].numel()  # mixing proportions
+            k += n_grps  # mixing proportions
+            # k += self.params["pi"].numel()  # mixing proportions
 
         if self.eps_sigma is not None:
             k += self.eps_sigma.shape[0] * self.eps_sigma.shape[1]  # random noise
 
         if self.new_hier:
-            k += self.params["alpha_prior"].numel()
+            k += self.params["alpha_prior"].shape[1] * n_grps
+            # k += self.params["alpha_prior"].numel()
             # if self.params["alpha_noise"] is not None:
             #     k += self.params["alpha_noise"].numel() # alpha if noise is learned
         else:
             if self.params["alpha_prior"] is not None:
-                k += self.params["alpha_prior"].numel()
+                k += self.params["alpha_prior"].shape[1] * n_grps
+                # k += self.params["alpha_prior"].numel()
             if not self.new_hier:
                 k += self.params["alpha"].numel()  # alpha if no noise is learned
 
