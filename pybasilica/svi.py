@@ -597,14 +597,15 @@ class PyBasilica():
 
         if self.enforce_sparsity:
             # alpha_prior = dist.Exponential(ones_tmp * alpha_p_sigma).sample()
-            alpha_prior = dist.Beta(ones_tmp * alpha_p_conc1, ones_tmp * alpha_p_conc0).sample()
+            # alpha_prior = dist.Beta(ones_tmp * alpha_p_conc1, ones_tmp * alpha_p_conc0).sample()
             # alpha = dist.Exponential(ones_tmp * alpha_rate).sample()
             alpha = dist.Beta(ones_tmp * alpha_p_conc1, ones_tmp * alpha_p_conc0).sample()
         else:
-            alpha_prior = dist.HalfNormal(ones_tmp * alpha_p_sigma).sample()
+            # alpha_prior = dist.HalfNormal(ones_tmp * alpha_p_sigma).sample()
             alpha = dist.HalfNormal(ones_tmp * alpha_sigma).sample()
 
-        epsilon = dist.HalfNormal(torch.ones(self.n_samples, self.contexts, dtype=torch.float64) * eps_sigma).sample()
+        if self.stage == "random_noise":
+            epsilon = dist.HalfNormal(torch.ones(self.n_samples, self.contexts, dtype=torch.float64) * eps_sigma).sample()
 
         if self.k_denovo > 0:
             beta_dn = dist.HalfNormal(torch.ones(self.k_denovo, self.contexts, dtype=torch.float64) * beta_d_sigma).sample()
@@ -694,7 +695,7 @@ class PyBasilica():
         return torch.cat((beta_fixed, beta_denovo), axis=0)
 
 
-    def _get_param(self, param_name, normalize=False, to_cpu=True):
+    def _get_param(self, param_name, normalize=False, to_cpu=True, convert=False):
         try:
             if param_name == "beta_fixed": 
                 par = self.beta_fixed
@@ -719,6 +720,9 @@ class PyBasilica():
 
             if normalize: 
                 par = self._norm_and_clamp(par)
+
+            if par is not None and convert:
+                par = np.array(par)
 
             return par
 
@@ -750,20 +754,20 @@ class PyBasilica():
         return alpha
 
 
-    def get_param_dict(self):
+    def get_param_dict(self, convert=False):
         params = dict()
-        params["alpha"] = self._get_param("alpha", normalize=True)
-        params["alpha_prior"] = self._get_param("alpha_prior_param", normalize=False)
-        params["alpha_noise"] = self._get_param("alpha_noise_param", normalize=False)
+        params["alpha"] = self._get_param("alpha", normalize=True, convert=convert)
+        params["alpha_prior"] = self._get_param("alpha_prior_param", normalize=False, convert=convert)
+        params["alpha_noise"] = self._get_param("alpha_noise_param", normalize=False, convert=convert)
 
-        params["beta_d"] =  self._get_param("beta_denovo", normalize=True)
-        params["beta_f"] = self._get_param("beta_fixed")
+        params["beta_d"] =  self._get_param("beta_denovo", normalize=True, convert=convert)
+        params["beta_f"] = self._get_param("beta_fixed", convert=convert)
 
-        params["pi"] = self._get_param("pi_param", normalize=False)
+        params["pi"] = self._get_param("pi_param", normalize=False, convert=convert)
 
-        params["pi_conc0"] = self._get_param("pi_conc0")
+        params["pi_conc0"] = self._get_param("pi_conc0", normalize=False, convert=convert)
 
-        params["lambda_epsilon"] = self._get_param("lambda_epsilon", normalize=False)
+        params["lambda_epsilon"] = self._get_param("lambda_epsilon", normalize=False, convert=convert)
 
         return params
 
@@ -834,7 +838,7 @@ class PyBasilica():
 
             likelihoods.append(self._likelihood(self.x, alpha, self.beta_fixed, beta_denovo, eps_sigma))
 
-            if self.store_parameters: train_params.append(self.get_param_dict())
+            if self.store_parameters: train_params.append(self.get_param_dict(convert=True))
 
             # convergence test 
             # if len(losses) >= 100 and len(losses) % 100 == 0 and convergence(x=losses[-100:], alpha=0.05):
@@ -941,9 +945,26 @@ class PyBasilica():
         self._set_beta_denovo()
         self._set_epsilon()
         self._set_clusters()
-        self.params = self.get_param_dict()
+        self.params = self.get_param_dict(convert=True)
 
         if isinstance(self.groups, torch.Tensor): self.groups = self.groups.tolist()
+
+
+    def _set_init_params(self):
+        # return
+        for k, v in self.init_params.items():
+            if v is None: continue
+
+            if k == "alpha_noise_param" or k == "alpha":
+                self.init_params[k] = pd.DataFrame(np.array(v), index=self.alpha.index, columns=self.alpha.columns)
+            elif k == "beta_dn_param":
+                self.init_params[k] = pd.DataFrame(np.array(v), index=self.beta_denovo.index, columns=self.beta_denovo.columns)
+            elif k == "alpha_prior_param":
+                self.init_params[k] = pd.DataFrame(np.array(v), index=range(self.n_groups), columns=self.alpha.columns)
+            elif k == "epsilon_var":
+                self.init_params[k] = pd.DataFrame(np.array(v), index=self.eps_sigma.index, columns=self.eps_sigma.columns)
+            else:
+                self.init_params[k] = np.array(v)
 
 
     def set_scores(self):
@@ -1061,7 +1082,7 @@ class PyBasilica():
                 k += self.params["alpha_prior"].shape[1] * n_grps
                 # k += self.params["alpha_prior"].numel()
             if not self.new_hier:
-                k += self.params["alpha"].numel()  # alpha if no noise is learned
+                k += self.n_samples * self.K  # alpha if no noise is learned
 
         print("N parameters", k)
         return k
@@ -1124,11 +1145,14 @@ class PyBasilica():
             elif parname == "beta_d": self.params["beta_d"] = self.beta_denovo
             elif parname == "beta_f": self.params["beta_f"] = self.beta_fixed
             elif parname == "pi": self.params["pi"] = self.pi
+            elif parname == "pi_conc0": self.params["pi_conc0"] = self.params["pi_conc0"] if self.params["pi_conc0"] is not None else None
             elif parname == "lambda_epsilon": self.params["lambda_epsilon"] = self.eps_sigma
             elif parname == "alpha_prior" and par is not None: 
                 self.params["alpha_prior"] = pd.DataFrame(np.array(par), index=range(self.n_groups), columns=fixed_names + denovo_names)
             elif parname == "alpha_noise" and par is not None:
                 self.params["alpha_noise"] = pd.DataFrame(np.array(par), index=sample_names, columns=fixed_names + denovo_names)
+
+        self._set_init_params()
 
 
     def _mv_to_gpu(self,*cpu_tens):
