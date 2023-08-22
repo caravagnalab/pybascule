@@ -467,16 +467,15 @@ class PyBasilica():
         Function to check the inputs of the Kmeans. There might be a problem when multiple observations 
         are equal since the Kmeans will keep only a unique copy of each and the others will not be initialized.
         '''
-        a = counts.numpy()
 
-        tmp, indexes, count = np.unique(a, axis=0, return_counts=True, return_index=True)
+        tmp, indexes, count = np.unique(counts, axis=0, return_counts=True, return_index=True)
         repeated_groups = tmp[count > 1].tolist()
 
-        unq = np.array([a[index] for index in sorted(indexes)])
+        unq = np.array([counts[index] for index in sorted(indexes)])
 
         removed_idx = {}
         for i, repeated_group in enumerate(repeated_groups):
-            rpt_idxs = np.argwhere(np.all(a == repeated_group, axis=1)).flatten()
+            rpt_idxs = np.argwhere(np.all(counts == repeated_group, axis=1)).flatten()
             removed = rpt_idxs[1:]
             for rm in removed:
                 removed_idx[rm] = rpt_idxs[0]
@@ -722,6 +721,7 @@ class PyBasilica():
                 par = self._norm_and_clamp(par)
 
             if par is not None and convert:
+                par = self._to_cpu(par, move=True)
                 par = np.array(par)
 
             return par
@@ -1058,7 +1058,7 @@ class PyBasilica():
 
     def _number_of_params(self):
         if self.groups is not None:
-            n_grps = len(np.unique(np.array(self.groups)))
+            n_grps = len(np.unique(np.array(self._to_cpu(self.groups, move=True))))
         k = 0
         if self.k_denovo == 0 and torch.sum(self.beta_fixed) == 0:
             k = 0
@@ -1124,24 +1124,25 @@ class PyBasilica():
         if self.beta_denovo is not None:
             for d in range(self.k_denovo):
                 denovo_names.append("D"+str(d+1))
-            self.beta_denovo = pd.DataFrame(np.array(self.beta_denovo), index=denovo_names, columns=mutation_features)
+            self.beta_denovo = pd.DataFrame(np.array(self._to_cpu(self.beta_denovo, move=True)), index=denovo_names, columns=mutation_features)
 
         # alpha
         if len(fixed_names+denovo_names) > 0:
-            self.alpha = pd.DataFrame(np.array(self.alpha), index=sample_names , columns=fixed_names + denovo_names)
+            self.alpha = pd.DataFrame(np.array(self._to_cpu(self.alpha, move=True)), index=sample_names , columns=fixed_names + denovo_names)
 
         # epsilon variance
         if self.stage=="random_noise":
-            self.eps_sigma = pd.DataFrame(np.array(self.eps_sigma), index=sample_names , columns=mutation_features)
+            self.eps_sigma = pd.DataFrame(np.array(self._to_cpu(self.eps_sigma, move=True)), index=sample_names , columns=mutation_features)
         else:
             self.eps_sigma = None
 
         if isinstance(self.pi, torch.Tensor): 
             self.pi = self.pi.tolist()
         if isinstance(self.post_probs, torch.Tensor): 
-            self.post_probs = pd.DataFrame(np.array(torch.transpose(self.post_probs, dim0=1, dim1=0)), index=sample_names , columns=range(self.cluster))
+            self.post_probs = pd.DataFrame(np.array(torch.transpose(self._to_cpu(self.post_probs, move=True), dim0=1, dim1=0)), index=sample_names , columns=range(self.cluster))
 
         for parname, par in self.params.items():
+            par = self._to_cpu(par, move=True)
             if parname == "alpha": self.params["alpha"] = self.alpha
             elif parname == "beta_d": self.params["beta_d"] = self.beta_denovo
             elif parname == "beta_f": self.params["beta_f"] = self.beta_fixed

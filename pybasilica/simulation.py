@@ -15,6 +15,13 @@ def norm_and_clamp(par):
     return par
 
 
+def to_cpu(param, move=True):
+    if param is None: return None
+    if move and torch.cuda.is_available() and isinstance(param, torch.Tensor):
+        return param.cpu()
+    return param
+
+
 def generate_model(alpha_prior, beta, n_muts, N, alpha_sigma=0.05, seed=15, use_normal=True):
     input_beta = beta
     if isinstance(beta, pd.DataFrame):
@@ -44,8 +51,12 @@ def generate_model(alpha_prior, beta, n_muts, N, alpha_sigma=0.05, seed=15, use_
         a = torch.matmul(torch.matmul(torch.diag(n_muts), alpha), beta)
         data = pyro.sample("obs", dist.Poisson(a).to_event(1))
 
-    return {"data":pd.DataFrame(data, columns=input_beta.columns), "alpha":pd.DataFrame(alpha, columns=input_beta.index), 
-            "alpha_sigma":alpha_sigma_corr, "beta":input_beta}
+    return {"data":pd.DataFrame(to_cpu(data, move=True), columns=input_beta.columns), 
+            "alpha":pd.DataFrame(to_cpu(alpha, move=True), columns=input_beta.index), 
+            "alpha_sigma":to_cpu(alpha_sigma_corr, move=True), 
+            "beta":input_beta}
+
+
 
 
 # #-----------------------------------------------------------------[<QC-PASSED>]
