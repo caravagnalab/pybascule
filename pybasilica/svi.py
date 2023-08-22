@@ -952,13 +952,14 @@ class PyBasilica():
 
     def _set_init_params(self):
         # return
-        for k, v in self.init_params.items():
+        for k, v_tmp in self.init_params.items():
+            v = self._to_cpu(v_tmp, move=True)
             if v is None: continue
 
             if k == "alpha_noise_param" or k == "alpha":
                 self.init_params[k] = pd.DataFrame(np.array(v), index=self.alpha.index, columns=self.alpha.columns)
             elif k == "beta_dn_param":
-                self.init_params[k] = pd.DataFrame(np.array(v), index=self.beta_denovo.index, columns=self.beta_denovo.columns)
+                self.init_params[k] = pd.DataFrame(np.array(v), index=self.beta_denovo.index, columns=self.beta_denovo.columns) if self.beta_denovo is not None else np.array(v)
             elif k == "alpha_prior_param":
                 self.init_params[k] = pd.DataFrame(np.array(v), index=range(self.n_groups), columns=self.alpha.columns)
             elif k == "epsilon_var":
@@ -1090,14 +1091,14 @@ class PyBasilica():
 
     def _to_cpu(self, param, move=True):
         if param is None: return None
-        if move and self.CUDA and torch.cuda.is_available():
+        if move and self.CUDA and torch.cuda.is_available() and isinstance(param, torch.Tensor):
             return param.cpu()
         return param
 
 
     def _to_gpu(self, param, move=True):
         if param is None: return None
-        if move and self.CUDA and torch.cuda.is_available():
+        if move and self.CUDA and torch.cuda.is_available() and isinstance(param, torch.Tensor):
             return param.cuda()
         return param
 
