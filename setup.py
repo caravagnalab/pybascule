@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name = "pybasilica",
-    version = "0.1.5",
+    version = "0.2",
     author = "Azad Sadr",
     author_email = "azad.sadr.h@gmail.com",
     description = "A bayesian model to extract mutational signatures",
@@ -19,7 +19,7 @@ setup(
         "pyro-api>=0.1.2",
         "pyro-ppl>=1.8.0",
         "numpy>=1.21.5",
-        "torch==1.10.2",
+        "torch>=1.10.2",
         "tqdm",
         "rich",
         "statsmodels",
