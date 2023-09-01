@@ -31,7 +31,7 @@ class PyBasilica():
         enumer = "parallel",
         cluster = None,
         hyperparameters = {"alpha_sigma":0.1, "alpha_p_sigma":1., "alpha_p_conc0":0.6, "alpha_p_conc1":0.6, "alpha_rate":5, 
-                           "beta_d_sigma":1, "eps_sigma":10, "alpha_noise_sigma":0.01, "pi_conc0":0.6},
+                           "beta_d_sigma":1, "eps_sigma":10, "alpha_noise_sigma":0.01, "pi_conc0":0.6, "scale_factor":1000},
         groups = None,
         beta_fixed = None,
         compile_model = True,
@@ -54,7 +54,7 @@ class PyBasilica():
         ):
 
         self._hyperpars_default = {"alpha_sigma":1., "alpha_p_sigma":1., "alpha_p_conc0":0.6, "alpha_p_conc1":0.6, "alpha_rate":5, 
-                                   "beta_d_sigma":1, "eps_sigma":10, "alpha_noise_sigma":0.01, "pi_conc0":0.6}
+                                   "beta_d_sigma":1, "eps_sigma":10, "alpha_noise_sigma":0.01, "pi_conc0":0.6, "scale_factor":1000}
         self.regul_denovo = regul_denovo
         self.regul_fixed = regul_fixed
         self.new_hier = new_hier
@@ -264,17 +264,17 @@ class PyBasilica():
                     else:
                         alpha_prior = pyro.sample("alpha_t", dist.HalfNormal(torch.tensor(alpha_p_sigma, dtype=torch.float64)))
                         # alpha_prior = pyro.sample("alpha_t", dist.HalfCauchy(torch.tensor(alpha_p_sigma, dtype=torch.float64)))
-            
-            alpha_prior = self._norm_and_clamp(alpha_prior)
 
-            q05 = alpha_prior - alpha_sigma # * alpha_prior
-            q95 = alpha_prior + alpha_sigma # * alpha_prior
-            # alpha_sigma_corr = (q_99 - q_01) / (2 * dist.Normal(alpha_prior, 1).icdf(torch.tensor(0.99)))  # good clustering
+            alpha_prior = self._norm_and_clamp(alpha_prior) * self.hyperparameters["scale_factor"]
+
+            # q05 = alpha_prior - alpha_sigma # * alpha_prior
+            # q95 = alpha_prior + alpha_sigma # * alpha_prior
+
             # alpha_sigma_corr = (q95 - q05) / ( dist.Cauchy(alpha_prior, 1).icdf(torch.tensor(1-0.05/2)) -\
             #                                    dist.Cauchy(alpha_prior, 1).icdf(torch.tensor(0.05/2)) )  # good clustering
             
-            alpha_sigma_corr = (q95 - q05) / ( dist.Normal(alpha_prior, 1).icdf(torch.tensor(1-0.05/2)) -\
-                                               dist.Normal(alpha_prior, 1).icdf(torch.tensor(0.05/2)) )  # good clustering
+            # alpha_sigma_corr = (q95 - q05) / ( dist.Normal(alpha_prior, 1).icdf(torch.tensor(1-0.05/2)) -\
+            #                                    dist.Normal(alpha_prior, 1).icdf(torch.tensor(0.05/2)) )  # good clustering
 
         else:
             if not self._noise_only:
@@ -320,7 +320,9 @@ class PyBasilica():
                     alpha = self._get_param("alpha")
                 else:
                     # alpha  = pyro.sample("latent_exposure", dist.Cauchy(alpha_prior[z], alpha_sigma_corr[z]).to_event(1))  # good clustering
-                    alpha  = pyro.sample("latent_exposure", dist.Normal(alpha_prior[z], alpha_sigma_corr[z]).to_event(1))
+                    # alpha  = pyro.sample("latent_exposure", dist.Normal(alpha_prior[z], alpha_sigma_corr[z]).to_event(1))
+
+                    alpha = pyro.sample("latent_exposure", dist.Dirichlet(alpha_prior[z]))
 
                 alpha = self._norm_and_clamp(alpha)
 
@@ -365,7 +367,7 @@ class PyBasilica():
                 pi_param = pyro.param("pi_param", lambda: init_params["pi_param"], constraint=constraints.simplex)
 
                 if self.nonparam:
-                    pi_conc0 = pyro.param("pi_conc0", lambda: dist.Uniform(0, 2).sample([cluster-1]), constraint=constraints.positive)
+                    pi_conc0 = pyro.param("pi_conc0", lambda: dist.Uniform(0, 2).sample([cluster-1]), constraint=constraints.greater_than_eq(torch.finfo().tiny))
                     with pyro.plate("beta_plate", cluster-1):
                         pyro.sample("beta", dist.Beta(torch.ones(cluster-1, dtype=torch.float64), pi_conc0))
 
@@ -381,13 +383,16 @@ class PyBasilica():
                     with pyro.plate("g", self.cluster):
                         pyro.sample("alpha_t", dist.Delta(alpha_prior_param))
 
-                alpha_prior_param = self._norm_and_clamp(alpha_prior_param)
+                alpha_prior_param = self._norm_and_clamp(alpha_prior_param) * self.hyperparameters["scale_factor"]
 
                 with pyro.plate("n2", n_samples):
                     z = pyro.sample("latent_class", dist.Categorical(pi_param), infer={"enumerate":self.enumer})
 
                     if not self.new_hier:
-                        alpha = pyro.param("alpha", lambda: alpha_prior_param[z.long()], constraint=constraints.greater_than_eq(0))
+                        # alpha = pyro.param("alpha", lambda: alpha_prior_param[z.long()], constraint=constraints.greater_than_eq(0))  # Normal or Cauchy
+                        # pyro.sample("latent_exposure", dist.Delta(alpha).to_event(1))
+
+                        alpha = pyro.param("alpha", lambda: alpha_prior_param[z.long()], constraint=constraints.simplex)  # Dirichlet
                         pyro.sample("latent_exposure", dist.Delta(alpha).to_event(1))
 
         else:
