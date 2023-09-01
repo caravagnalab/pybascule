@@ -268,6 +268,8 @@ class PyBasilica():
             # alpha_prior = self._norm_and_clamp(alpha_prior)  # Normal or Cauchy
             alpha_prior = alpha_prior * self.hyperparameters["scale_factor"]  # Dirichlet
 
+            print("MODEL", alpha_prior)
+
             # q05 = alpha_prior - alpha_sigma # * alpha_prior
             # q95 = alpha_prior + alpha_sigma # * alpha_prior
 
@@ -321,6 +323,7 @@ class PyBasilica():
                     alpha = self._get_param("alpha")
                 else:
                     # alpha  = pyro.sample("latent_exposure", dist.Cauchy(alpha_prior[z], alpha_sigma_corr[z]).to_event(1))  # good clustering
+
                     # alpha  = pyro.sample("latent_exposure", dist.Normal(alpha_prior[z], alpha_sigma_corr[z]).to_event(1))
 
                     alpha = pyro.sample("latent_exposure", dist.Dirichlet(alpha_prior[z]))
@@ -337,6 +340,8 @@ class PyBasilica():
                 # lk_sum = lk.sum()
                 # pyro.factor("loss", lk_sum + self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1]))
                 pyro.factor("loss", self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1]))
+
+            print("MODEL", alpha)
 
 
     def guide(self):
@@ -384,7 +389,8 @@ class PyBasilica():
                     with pyro.plate("g", self.cluster):
                         pyro.sample("alpha_t", dist.Delta(alpha_prior_param))
 
-                alpha_prior_param = self._norm_and_clamp(alpha_prior_param) * self.hyperparameters["scale_factor"]
+                # alpha_prior_param = self._norm_and_clamp(alpha_prior_param)  # Normal or Cauchy
+                alpha_prior_param = alpha_prior_param * self.hyperparameters["scale_factor"]  # Dirichlet
 
                 with pyro.plate("n2", n_samples):
                     z = pyro.sample("latent_class", dist.Categorical(pi_param), infer={"enumerate":self.enumer})
@@ -395,6 +401,9 @@ class PyBasilica():
 
                         alpha = pyro.param("alpha", lambda: alpha_prior_param[z.long()], constraint=constraints.simplex)  # Dirichlet
                         pyro.sample("latent_exposure", dist.Delta(alpha).to_event(1))
+
+                print("GUIDE", alpha_prior_param)
+                print("GUIDE", alpha)
 
         else:
             if not self._noise_only:
