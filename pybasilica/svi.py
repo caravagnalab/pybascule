@@ -265,7 +265,8 @@ class PyBasilica():
                         alpha_prior = pyro.sample("alpha_t", dist.HalfNormal(torch.tensor(alpha_p_sigma, dtype=torch.float64)))
                         # alpha_prior = pyro.sample("alpha_t", dist.HalfCauchy(torch.tensor(alpha_p_sigma, dtype=torch.float64)))
 
-            alpha_prior = self._norm_and_clamp(alpha_prior) * self.hyperparameters["scale_factor"]
+            # alpha_prior = self._norm_and_clamp(alpha_prior)  # Normal or Cauchy
+            alpha_prior = alpha_prior * self.hyperparameters["scale_factor"]  # Dirichlet
 
             # q05 = alpha_prior - alpha_sigma # * alpha_prior
             # q95 = alpha_prior + alpha_sigma # * alpha_prior
@@ -324,7 +325,7 @@ class PyBasilica():
 
                     alpha = pyro.sample("latent_exposure", dist.Dirichlet(alpha_prior[z]))
 
-                alpha = self._norm_and_clamp(alpha)
+                # alpha = self._norm_and_clamp(alpha)
 
             a = torch.matmul(torch.matmul(torch.diag(torch.sum(self.x, axis=1)), alpha), beta)
             if self.stage == "random_noise": a = a + epsilon
