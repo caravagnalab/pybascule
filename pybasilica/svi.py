@@ -31,21 +31,23 @@ class PyBasilica():
         enumer = "parallel",
         cluster = None,
         hyperparameters = {"alpha_sigma":0.1, "alpha_p_sigma":1., "alpha_p_conc0":0.6, "alpha_p_conc1":0.6, "alpha_rate":5, 
-                           "beta_d_sigma":1, "eps_sigma":10, "pi_conc0":0.6, "scale_factor":1000},
+                           "beta_d_sigma":1, "eps_sigma":10, "alpha_noise_sigma":0.01, "pi_conc0":0.6, "scale_factor":1000},
         groups = None,
+        dirichlet_prior = False,
         beta_fixed = None,
         compile_model = True,
-        dirichlet_prior = False,
         CUDA = False,
         enforce_sparsity = False,
         store_parameters = False,
         regularizer = "cosine",
         reg_weight = 0.,
+        reg_bic = True, 
         stage = "", 
         regul_compare = None,
         seed = 10,
         initializ_seed = False,
         initializ_pars_fit = False,
+        new_hier = False,
         regul_denovo = True,
         regul_fixed = True,
         nonparam = False,
@@ -53,14 +55,15 @@ class PyBasilica():
         ):
 
         self._hyperpars_default = {"alpha_sigma":1., "alpha_p_sigma":1., "alpha_p_conc0":0.6, "alpha_p_conc1":0.6, "alpha_rate":5, 
-                                   "beta_d_sigma":1, "eps_sigma":10, "pi_conc0":0.6, "scale_factor":1000}
+                                   "beta_d_sigma":1, "eps_sigma":10, "alpha_noise_sigma":0.01, "pi_conc0":0.6, "scale_factor":1000}
         self.regul_denovo = regul_denovo
         self.regul_fixed = regul_fixed
+        self.new_hier = new_hier
         self.initial_fit = initial_fit
         self.dirichlet_prior = dirichlet_prior
 
         self._set_data_catalogue(x)
-        self._set_fit_settings(enforce_sparsity, lr, n_steps, compile_model, CUDA, regularizer, reg_weight, \
+        self._set_fit_settings(enforce_sparsity, lr, n_steps, compile_model, CUDA, regularizer, reg_weight, reg_bic, \
                                store_parameters, stage, initializ_seed, initializ_pars_fit, seed, nonparam)
 
         self._set_beta_fixed(beta_fixed)
@@ -76,7 +79,7 @@ class PyBasilica():
 
 
     def _set_fit_settings(self, enforce_sparsity, lr, n_steps, compile_model, CUDA, \
-                          regularizer, reg_weight, store_parameters, stage,
+                          regularizer, reg_weight, reg_bic, store_parameters, stage,
                           initializ_seed, initializ_pars_fit, seed, nonparam):
         self.enforce_sparsity = enforce_sparsity
         self.lr = lr
@@ -85,6 +88,7 @@ class PyBasilica():
         self.CUDA = CUDA
         self.regularizer = regularizer
         self.reg_weight = reg_weight
+        self.reg_bic = reg_bic
 
         self.store_parameters = store_parameters
         self.stage = stage
@@ -102,6 +106,8 @@ class PyBasilica():
 
 
     def _set_hyperparams(self, enumer, cluster, groups, hyperparameters):
+        if groups is None and cluster is None:
+            self.new_hier = False
         self.enumer = enumer
 
         self.cluster = cluster
@@ -210,11 +216,11 @@ class PyBasilica():
 
     def model(self):
 
-        n_samples = self.n_samples
+        n_samples, k_fixed, k_denovo = self.n_samples, self.k_fixed, self.k_denovo
         groups, cluster = self.groups, self.cluster  # number of clusters or None
 
         alpha_sigma, alpha_rate = self.hyperparameters["alpha_sigma"], self.hyperparameters["alpha_rate"]
-        alpha_p_sigma = self.hyperparameters["alpha_p_sigma"]
+        alpha_p_sigma, alpha_noise_sigma = self.hyperparameters["alpha_p_sigma"], self.hyperparameters["alpha_noise_sigma"]
         alpha_conc0, alpha_conc1 = self.hyperparameters["alpha_p_conc0"], self.hyperparameters["alpha_p_conc1"]
         beta_d_sigma = self.hyperparameters["beta_d_sigma"]
         pi_conc0 = self.hyperparameters["pi_conc0"]
@@ -232,9 +238,13 @@ class PyBasilica():
                             alpha_prior = pyro.sample("alpha_t", dist.HalfNormal(alpha_p_sigma))
 
                 # sample from the alpha prior
+                r_noise = dist.HalfNormal(torch.ones(n_samples, k_fixed + k_denovo) * alpha_noise_sigma).sample()
                 with pyro.plate("k", self.K):  # columns
                     with pyro.plate("n", self.n_samples):  # rows
-                        alpha = pyro.sample("latent_exposure", dist.Normal(alpha_prior[self.groups,:], alpha_sigma))
+                        if self.new_hier: 
+                            alpha = pyro.sample("latent_exposure", dist.Normal(alpha_prior[self.groups,:], r_noise))
+                        else:
+                            alpha = pyro.sample("latent_exposure", dist.Normal(alpha_prior[self.groups,:], alpha_sigma))
 
                 alpha = self._norm_and_clamp(alpha)
 
@@ -246,22 +256,24 @@ class PyBasilica():
             else:
                 pi = pyro.sample("pi", dist.Dirichlet(torch.ones(cluster, dtype=torch.float64)))
 
+            # if not self.spike_n_slab:
             with pyro.plate("k1", self.K):
                 with pyro.plate("g", cluster):  # G x K matrix
                     if self.enforce_sparsity:
+                        # alpha_prior = pyro.sample("alpha_t", dist.Exponential(alpha_prior_var))
                         alpha_prior = pyro.sample("alpha_t", dist.Beta(alpha_conc1, alpha_conc0))
                     else:
                         alpha_prior = pyro.sample("alpha_t", dist.HalfNormal(torch.tensor(alpha_p_sigma, dtype=torch.float64)))
 
-            if self.dirichlet_prior:
-                alpha_prior = self._norm_and_clamp(alpha_prior, scale=self.hyperparameters["scale_factor"])  # Dirichlet
+            if self.dirichlet_prior: alpha_prior = alpha_prior * self.hyperparameters["scale_factor"]  # Dirichlet
             else: 
                 alpha_prior = self._norm_and_clamp(alpha_prior)  # Normal or Cauchy
+
                 q05 = alpha_prior - alpha_sigma # * alpha_prior
                 q95 = alpha_prior + alpha_sigma # * alpha_prior
 
                 self.alpha_sigma_corr = (q95 - q05) / ( dist.Normal(alpha_prior, 1).icdf(torch.tensor(1-0.05/2)) -\
-                                                    dist.Normal(alpha_prior, 1).icdf(torch.tensor(0.05/2)) )
+                                                       dist.Normal(alpha_prior, 1).icdf(torch.tensor(0.05/2)) )  # good clustering
 
         else:
             if not self._noise_only:
@@ -271,6 +283,9 @@ class PyBasilica():
                             alpha = pyro.sample("latent_exposure", dist.Exponential(alpha_rate))
                         else:
                             alpha = pyro.sample("latent_exposure", dist.HalfNormal(torch.tensor(alpha_sigma, dtype=torch.float64)))
+                            # alpha = pyro.sample("latent_exposure", dist.HalfCauchy(torch.tensor(alpha_sigma, dtype=torch.float64)))
+
+                alpha = self._norm_and_clamp(alpha)
 
         epsilon = None
         if self.stage == "random_noise":
@@ -281,9 +296,12 @@ class PyBasilica():
         # Beta
         beta_denovo = None
         if self.k_denovo > 0:
-            with pyro.plate("contexts", self.contexts):  # columns
-                with pyro.plate("k_denovo", self.k_denovo):  # rows
-                    beta_denovo = pyro.sample("latent_signatures", dist.HalfNormal(beta_d_sigma))
+            if cluster is not None and self.new_hier:
+                beta_denovo = self._get_param("beta_denovo")
+            else:
+                with pyro.plate("contexts", self.contexts):  # columns
+                    with pyro.plate("k_denovo", self.k_denovo):  # rows
+                        beta_denovo = pyro.sample("latent_signatures", dist.HalfNormal(beta_d_sigma))
 
             beta_denovo = self._norm_and_clamp(beta_denovo)
 
@@ -292,14 +310,18 @@ class PyBasilica():
         self.reg = reg
 
         # Observations
+        r_noise = dist.HalfNormal(torch.ones(n_samples, k_fixed + k_denovo) * alpha_noise_sigma).sample()
         with pyro.plate("n2", n_samples):
             if cluster is not None:
                 z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":self.enumer})
 
-                if self.dirichlet_prior: alpha = pyro.sample("latent_exposure", dist.Dirichlet(alpha_prior[z]))
-                else: alpha  = pyro.sample("latent_exposure", dist.Normal(alpha_prior[z], self.alpha_sigma_corr[z]).to_event(1))
+                if self.new_hier: 
+                    alpha = self._get_param("alpha")
+                else:
+                    if self.dirichlet_prior: alpha = pyro.sample("latent_exposure", dist.Dirichlet(alpha_prior[z]))
+                    else: alpha  = pyro.sample("latent_exposure", dist.Normal(alpha_prior[z], self.alpha_sigma_corr[z]).to_event(1))
 
-            alpha = self._norm_and_clamp(alpha)
+                alpha = self._norm_and_clamp(alpha)
 
             a = torch.matmul(torch.matmul(torch.diag(torch.sum(self.x, axis=1)), alpha), beta)
             if self.stage == "random_noise": a = a + epsilon
@@ -329,8 +351,13 @@ class PyBasilica():
                         pyro.sample("alpha_t", dist.Delta(alpha_prior_param))
 
                     with pyro.plate("n", self.n_samples):  # rows
-                        alpha = pyro.param("alpha", alpha_prior_param[self.groups, :], constraint=constraints.greater_than_eq(0))
-                        pyro.sample("latent_exposure", dist.Delta(alpha))
+                        if self.new_hier:
+                            alpha_noise_param = pyro.param("alpha_noise_param", init_params["alpha_noise"], constraint=constraints.greater_than(0.))
+                            alpha_noise = pyro.sample("alpha_noise", dist.Delta(alpha_noise_param))
+                            pyro.sample("latent_exposure", dist.Delta(alpha_prior_param[self.groups, :] + alpha_noise))
+                        else:
+                            alpha = pyro.param("alpha", alpha_prior_param[self.groups, :], constraint=constraints.greater_than_eq(0))
+                            pyro.sample("latent_exposure", dist.Delta(alpha))
 
         elif cluster is not None:
             if not self._noise_only:
@@ -353,16 +380,17 @@ class PyBasilica():
                     with pyro.plate("g", self.cluster):
                         pyro.sample("alpha_t", dist.Delta(alpha_prior_param))
 
-                if self.dirichlet_prior: alpha_prior_param = self._norm_and_clamp(alpha_prior_param, scale=self.hyperparameters["scale_factor"])  # Dirichlet
+                if self.dirichlet_prior: alpha_prior_param = alpha_prior_param * self.hyperparameters["scale_factor"]  # Dirichlet
                 else: alpha_prior_param = self._norm_and_clamp(alpha_prior_param)  # Normal or Cauchy
 
                 with pyro.plate("n2", n_samples):
                     z = pyro.sample("latent_class", dist.Categorical(pi_param), infer={"enumerate":self.enumer})
 
-                    if self.dirichlet_prior: alpha = pyro.param("alpha", lambda: alpha_prior_param[z.long()], constraint=constraints.simplex)  # Dirichlet
-                    else: alpha = pyro.param("alpha", lambda: alpha_prior_param[z.long()], constraint=constraints.greater_than_eq(0))  # Normal or Cauchy
+                    if not self.new_hier:
+                        if self.dirichlet_prior: alpha = pyro.param("alpha", lambda: alpha_prior_param[z.long()], constraint=constraints.simplex)  # Dirichlet
+                        else: alpha = pyro.param("alpha", lambda: alpha_prior_param[z.long()], constraint=constraints.greater_than_eq(0))  # Normal or Cauchy
 
-                    pyro.sample("latent_exposure", dist.Delta(alpha).to_event(1))
+                        pyro.sample("latent_exposure", dist.Delta(alpha).to_event(1))
 
         else:
             if not self._noise_only:
@@ -386,10 +414,11 @@ class PyBasilica():
 
         # Beta
         if k_denovo > 0:
-            beta_param = pyro.param("beta_denovo", lambda: init_params["beta_dn_param"], constraint=constraints.greater_than_eq(0.0))
-            with pyro.plate("contexts", self.contexts):
-                with pyro.plate("k_denovo", k_denovo):
-                    pyro.sample("latent_signatures", dist.Delta(beta_param))
+            if cluster is None or not self.new_hier:
+                beta_param = pyro.param("beta_denovo", lambda: init_params["beta_dn_param"], constraint=constraints.greater_than_eq(0.0))
+                with pyro.plate("contexts", self.contexts):
+                    with pyro.plate("k_denovo", k_denovo):
+                        pyro.sample("latent_signatures", dist.Delta(beta_param))
 
 
     def check_input_kmeans(self, counts):
@@ -422,6 +451,8 @@ class PyBasilica():
             removed_idx, data_unq = self.check_input_kmeans(X.numpy())
 
             km = KMeans(n_clusters=G, random_state=seed).fit(data_unq)
+            assert km.n_iter_ < km.max_iter
+
             clusters = km.labels_
             for rm in sorted(removed_idx.keys()):
                 # insert 0 elements to restore the original number of obs
@@ -451,12 +482,14 @@ class PyBasilica():
         cluster_true = self.cluster
         enforce_sparsity_true = self.enforce_sparsity
         hyperpars_true = self.hyperparameters
+        new_hier_true = self.new_hier
         x_true, n_samples_true = self.x, self.n_samples
 
         self.cluster = None
         self.initializ_seed = False
         self.enforce_sparsity = False
         self.hyperparameters = self._hyperpars_default
+        self.new_hier = False
 
         pyro.get_param_store().clear()
         self._fit(set_attributes=False)
@@ -469,20 +502,22 @@ class PyBasilica():
         self.cluster = cluster_true
         self.enforce_sparsity = enforce_sparsity_true
         self.hyperparameters = hyperpars_true
+        self.new_hier = new_hier_true
 
         return alpha, beta_dn
 
 
     def _initialize_params_clustering(self):
-        pi = alpha_prior = epsilon = beta_dn = None
+        pi = alpha_noise = alpha_prior = epsilon = beta_dn = None
         eps_sigma, beta_d_sigma = self.hyperparameters["eps_sigma"], self.hyperparameters["beta_d_sigma"]
 
         if self.initial_fit is None:
             alpha, beta_dn = self._run_initial_fit()
         else:
             alpha = self._to_gpu(self.initial_fit.alpha_unn, move=True)
+            if self.new_hier: beta_dn = self._to_gpu(self.initial_fit.beta_denovo, move=True)
 
-        beta_dn = dist.HalfNormal(torch.ones(self.k_denovo, self.contexts, dtype=torch.float64) * beta_d_sigma).sample()
+        if not self.new_hier: beta_dn = dist.HalfNormal(torch.ones(self.k_denovo, self.contexts, dtype=torch.float64) * beta_d_sigma).sample()
 
         km = self._initialize_weights(X=alpha.clone(), G=self.cluster)
         pi_km = torch.tensor([(np.where(km.labels_ == k)[0].shape[0]) / self.n_samples for k in range(km.n_clusters)])
@@ -494,7 +529,7 @@ class PyBasilica():
 
         if self.stage == "random_noise": epsilon = torch.ones(self.n_samples, self.contexts, dtype=torch.float64) * eps_sigma
 
-        params = self._create_init_params_dict(pi=torch.tensor(pi, dtype=torch.float64), 
+        params = self._create_init_params_dict(pi=torch.tensor(pi, dtype=torch.float64), alpha_noise=alpha_noise, 
                                                alpha_prior=torch.tensor(alpha_prior, dtype=torch.float64), 
                                                alpha=alpha, epsilon=epsilon, beta_dn=beta_dn)
         params["init_clusters"] = groups_kmeans
@@ -502,13 +537,15 @@ class PyBasilica():
 
 
     def _initialize_params_nonhier(self):
-        pi = alpha_prior = alpha = epsilon = beta_dn = None
+        pi = alpha_noise = alpha_prior = alpha = epsilon = beta_dn = None
 
-        alpha_sigma = self.hyperparameters["alpha_sigma"]
+        alpha_sigma, alpha_rate = self.hyperparameters["alpha_sigma"], self.hyperparameters["alpha_rate"]
+        alpha_p_sigma, alpha_noise_sigma = self.hyperparameters["alpha_p_sigma"], self.hyperparameters["alpha_noise_sigma"]
         alpha_p_conc0, alpha_p_conc1 = self.hyperparameters["alpha_p_conc0"], self.hyperparameters["alpha_p_conc1"]
         beta_d_sigma = self.hyperparameters["beta_d_sigma"]
         eps_sigma = self.hyperparameters["eps_sigma"]
 
+        alpha_noise = dist.Normal(0, torch.ones(self.n_samples, self.K, dtype=torch.float64) * alpha_noise_sigma).sample()
         if self.cluster is not None:
             ones_tmp = torch.ones(self.cluster, self.K, dtype=torch.float64)
             pi = torch.ones(self.cluster, dtype=torch.float64)
@@ -518,6 +555,8 @@ class PyBasilica():
 
         if self.enforce_sparsity:
             # alpha_prior = dist.Exponential(ones_tmp * alpha_p_sigma).sample()
+            # alpha_prior = dist.Beta(ones_tmp * alpha_p_conc1, ones_tmp * alpha_p_conc0).sample()
+            # alpha = dist.Exponential(ones_tmp * alpha_rate).sample()
             alpha = dist.Beta(ones_tmp * alpha_p_conc1, ones_tmp * alpha_p_conc0).sample()
         else:
             # alpha_prior = dist.HalfNormal(ones_tmp * alpha_p_sigma).sample()
@@ -529,15 +568,17 @@ class PyBasilica():
         if self.k_denovo > 0:
             beta_dn = dist.HalfNormal(torch.ones(self.k_denovo, self.contexts, dtype=torch.float64) * beta_d_sigma).sample()
 
-        params = self._create_init_params_dict(pi=pi, alpha_prior=alpha_prior, alpha=alpha, epsilon=epsilon, beta_dn=beta_dn)
+        params = self._create_init_params_dict(pi=pi, alpha_noise=alpha_noise, alpha_prior=alpha_prior, \
+                                               alpha=alpha, epsilon=epsilon, beta_dn=beta_dn)
 
         return params
 
 
-    def _create_init_params_dict(self, pi=None, alpha_prior=None, alpha=None, epsilon=None, beta_dn=None):
+    def _create_init_params_dict(self, pi=None, alpha_noise=None, alpha_prior=None, alpha=None, epsilon=None, beta_dn=None):
         params = dict()
 
         params["pi_param"] = pi
+        params["alpha_noise_param"] = alpha_noise
         params["alpha_prior_param"] = alpha_prior
         params["alpha"] = alpha
         params["epsilon_var"] = epsilon
@@ -562,11 +603,14 @@ class PyBasilica():
     def _regularizer(self, beta_fixed, beta_denovo, reg_type = "cosine"):
         loss = 0
 
-        if self.reg_weight == 0: return loss
+        if self.reg_weight == 0:
+            return loss
 
-        if self.regul_compare is not None: beta_fixed = self.regul_compare
+        if self.regul_compare is not None:
+            beta_fixed = self.regul_compare
 
-        if beta_fixed is None or beta_denovo is None or self._noise_only: return loss
+        if beta_fixed is None or beta_denovo is None or self._noise_only:
+            return loss
 
         beta_fixed[beta_fixed==0] = 1e-07
 
@@ -609,16 +653,19 @@ class PyBasilica():
         return torch.cat((beta_fixed, beta_denovo), axis=0)
 
 
-    def _get_param(self, param_name, normalize=False, to_cpu=True, convert=False, scale=1.):
+    def _get_param(self, param_name, normalize=False, to_cpu=True, convert=False):
         try:
             if param_name == "beta_fixed": 
                 par = self.beta_fixed
 
-            elif param_name == "beta_denovo":
+            elif param_name == "beta_denovo" and (self.cluster is not None and self.new_hier):
                 par = self.init_params["beta_dn_param"]
 
             elif param_name == "alpha":
                 if self._noise_only: return self._to_gpu(torch.zeros(self.n_samples, 1, dtype=torch.float64), move=not to_cpu)
+                elif self.new_hier: 
+                    # par = self._get_alpha_hier(grps=self._get_groups(to_cpu=to_cpu), normalize=normalize)
+                    par = self.init_params["alpha"]
                 else: par = pyro.param("alpha")
 
             else:
@@ -630,7 +677,7 @@ class PyBasilica():
                 par = par.clone().detach()
 
             if normalize: 
-                par = self._norm_and_clamp(par, scale=scale)
+                par = self._norm_and_clamp(par)
 
             if par is not None and convert:
                 par = self._to_cpu(par, move=True)
@@ -652,10 +699,25 @@ class PyBasilica():
         return None
 
 
+    def _get_alpha_hier(self, grps, normalize):
+        alpha_prior = self._get_param("alpha_prior_param", normalize=False, to_cpu=False)
+        alpha_noise = self._get_param("alpha_noise_param", normalize=False, to_cpu=False)
+
+        if alpha_noise is None:
+            alpha_noise = self._to_cpu(dist.Normal(0, torch.ones(self.K, dtype=torch.float64) * \
+                                                   self.hyperparameters["alpha_noise_sigma"]).sample())
+
+        alpha = alpha_prior[grps] + alpha_noise
+        if normalize: alpha = self._norm_and_clamp(alpha)
+
+        return alpha
+
+
     def get_param_dict(self, convert=False):
         params = dict()
         params["alpha"] = self._get_param("alpha", normalize=True, convert=convert)
         params["alpha_prior"] = self._get_param("alpha_prior_param", normalize=False, convert=convert)
+        params["alpha_noise"] = self._get_param("alpha_noise_param", normalize=False, convert=convert)
 
         params["beta_d"] =  self._get_param("beta_denovo", normalize=True, convert=convert)
         params["beta_f"] = self._get_param("beta_fixed", convert=convert)
@@ -730,6 +792,9 @@ class PyBasilica():
             eps_sigma = self._get_param("eps_sigma", normalize=False, to_cpu=False)
             beta_denovo = self._get_param("beta_denovo", normalize=True, to_cpu=False)
 
+            if alpha is None: print("Alpha is None at step", i, self.cluster)
+            # if beta_denovo is None: print("Beta_denovo is None at step", i, self.cluster)
+
             likelihoods.append(self._likelihood(self.x, alpha, self.beta_fixed, beta_denovo, eps_sigma))
 
             if self.store_parameters: train_params.append(self.get_param_dict(convert=True))
@@ -784,7 +849,7 @@ class PyBasilica():
         scale = self.hyperparameters["scale_factor"] if self.dirichlet_prior else 1
 
         pi = self._get_param("pi_param", to_cpu=to_cpu, normalize=False)
-        alpha_prior = self._get_param("alpha_prior_param", to_cpu=to_cpu, normalize=True, scale=scale)  # G x K
+        alpha_prior = self._get_param("alpha_prior_param", to_cpu=to_cpu, normalize=True) * scale  # G x K
 
         M = torch.tensor(self.x, dtype=torch.double)
         beta_denovo = self._get_param("beta_denovo", to_cpu=to_cpu, normalize=True)
@@ -804,18 +869,18 @@ class PyBasilica():
             ll_k[k,:] = logprob_lik + torch.log(pi[k]) + logprob_alpha
 
         ll = self._logsumexp(ll_k)
+
         probs = torch.exp(ll_k - ll) if compute_exp else ll_k - ll
         z = torch.argmax(probs, dim=0)
-
         return self._to_cpu(z.long(), move=to_cpu), self._to_cpu(probs, move=to_cpu)
 
 
-    def _norm_and_clamp(self, par, scale=1):
+    def _norm_and_clamp(self, par):
         mmin = 0
         if torch.any(par < 0): mmin = torch.min(par, dim=-1)[0].unsqueeze(-1)
 
         nnum = par - mmin
-        par = (nnum * scale) / torch.sum((nnum * scale), dim=-1).unsqueeze(-1) * scale
+        par = nnum / torch.sum(nnum, dim=-1).unsqueeze(-1)
 
         return par
 
@@ -849,7 +914,7 @@ class PyBasilica():
             v = self._to_cpu(v_tmp, move=True)
             if v is None: continue
 
-            if k == "alpha":
+            if k == "alpha_noise_param" or k == "alpha":
                 self.init_params[k] = pd.DataFrame(np.array(v), index=self.alpha.index, columns=self.alpha.columns)
             elif k == "beta_dn_param":
                 self.init_params[k] = pd.DataFrame(np.array(v), index=self.beta_denovo.index, columns=self.beta_denovo.columns) if self.beta_denovo is not None else np.array(v)
@@ -873,6 +938,8 @@ class PyBasilica():
 
         self.alpha_prior = self._get_param("alpha_prior_param", normalize=True)
         self.alpha_prior_unn = self._get_param("alpha_prior_param", normalize=False)
+
+        self.alpha_noise = self._get_param("alpha_noise_param", normalize=False)
 
 
     def _set_beta_denovo(self):
@@ -898,7 +965,7 @@ class PyBasilica():
     def _set_bic(self):
         _log_like = self.likelihood
         # adding regularizer
-        if self.reg_weight != 0:
+        if self.reg_weight != 0 and self.reg_bic:
             reg = self._regularizer(self.beta_fixed, self.beta_denovo, reg_type = self.regularizer)
             _log_like += self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1])
 
@@ -911,7 +978,7 @@ class PyBasilica():
     def _set_aic(self):
         _log_like = self.likelihood
         # adding regularizer
-        if self.reg_weight != 0:
+        if self.reg_weight != 0 and self.reg_bic:
             reg = self._regularizer(self.beta_fixed, self.beta_denovo, reg_type = self.regularizer)
             _log_like += self.reg_weight * (reg * self.x.shape[0] * self.x.shape[1])
 
@@ -954,7 +1021,7 @@ class PyBasilica():
         if self.k_denovo == 0 and torch.sum(self.beta_fixed) == 0:
             k = 0
         else:
-            if self.initial_fit is None:
+            if self.initial_fit is None and not self.new_hier:
                 k += self.k_denovo * self.contexts # beta denovo
 
         if self.cluster is not None:
@@ -964,10 +1031,17 @@ class PyBasilica():
         if self.eps_sigma is not None:
             k += self.eps_sigma.shape[0] * self.eps_sigma.shape[1]  # random noise
 
-        if self.params["alpha_prior"] is not None:
+        if self.new_hier:
             k += self.params["alpha_prior"].shape[1] * n_grps
             # k += self.params["alpha_prior"].numel()
-        k += self.n_samples * self.K  # alpha if no noise is learned
+            # if self.params["alpha_noise"] is not None:
+            #     k += self.params["alpha_noise"].numel() # alpha if noise is learned
+        else:
+            if self.params["alpha_prior"] is not None:
+                k += self.params["alpha_prior"].shape[1] * n_grps
+                # k += self.params["alpha_prior"].numel()
+            if not self.new_hier:
+                k += self.n_samples * self.K  # alpha if no noise is learned
 
         print("N parameters", k)
         return k
@@ -1035,6 +1109,8 @@ class PyBasilica():
             elif parname == "lambda_epsilon": self.params["lambda_epsilon"] = self.eps_sigma
             elif parname == "alpha_prior" and par is not None: 
                 self.params["alpha_prior"] = pd.DataFrame(np.array(par), index=range(self.n_groups), columns=fixed_names + denovo_names)
+            elif parname == "alpha_noise" and par is not None:
+                self.params["alpha_noise"] = pd.DataFrame(np.array(par), index=sample_names, columns=fixed_names + denovo_names)
 
         self._set_init_params()
 
@@ -1087,3 +1163,4 @@ def convergence(x, alpha: float = 0.05):
         raise Exception("input list is not valid type!, expected list.")
 
     return is_stationary(data, alpha=alpha)
+
