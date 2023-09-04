@@ -811,12 +811,7 @@ class PyBasilica():
             logprob_alpha = dist.Dirichlet(alpha_k).log_prob(alpha)  # N dim vector
             # logprob_alpha = dist.Normal(alpha_k, alpha_sigma[k,:]).log_prob(alpha).sum(axis=1)  # N dim vector
             logprob_lik = dist.Poisson( rate ).log_prob(M).sum(axis=1)  # N dim vector, summed over contexts
-            ll_k[k,:] = logprob_alpha + logprob_lik + torch.log(pi[k])
-
-            # print(logprob_alpha.shape)
-            # print(logprob_lik.shape)
-
-            # ll_k[k,:] = logprob_alpha + torch.log(pi[k])
+            ll_k[k,:] = logprob_lik + torch.log(pi[k]) + logprob_alpha
 
         ll = self._logsumexp(ll_k)
 
