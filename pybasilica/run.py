@@ -45,7 +45,7 @@ def single_run(seed_list, save_runs_seed, kwargs):
 def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluster=None, groups=None, beta_fixed=None, hyperparameters=None,
         compile_model = False, CUDA = False, enforce_sparsity = False, regularizer = "cosine", reg_weight = 0., reg_bic = False,
         store_parameters=False, verbose=True, stage = "", regul_compare = None, seed = 10, initializ_seed = False, save_all_fits=False,
-        save_runs_seed = False, initializ_pars_fit = False, new_hier = False, regul_denovo = True, regul_fixed=True, nonparametric=False, do_initial_fit=False):
+        save_runs_seed = False, initializ_pars_fit = False, regul_denovo = True, regul_fixed=True, nonparametric=False, do_initial_fit=False):
 
     if isinstance(seed, int):
         seed = [seed]
@@ -80,7 +80,6 @@ def fit(x, k_list=[0,1,2,3,4,5], lr=0.05, n_steps=500, enumer="parallel", cluste
         "regul_compare":regul_compare,
         "initializ_seed":initializ_seed,
         "initializ_pars_fit":initializ_pars_fit,
-        "new_hier":new_hier,
         "regul_denovo":regul_denovo,
         "regul_fixed":regul_fixed,
         "nonparam":nonparametric,
