@@ -35,6 +35,7 @@ class PyBasilica():
         groups = None,
         beta_fixed = None,
         compile_model = True,
+        dirichlet_prior = False,
         CUDA = False,
         enforce_sparsity = False,
         store_parameters = False,
@@ -57,6 +58,7 @@ class PyBasilica():
         self.regul_denovo = regul_denovo
         self.regul_fixed = regul_fixed
         self.initial_fit = initial_fit
+        self.dirichlet_prior = dirichlet_prior
 
         self._set_data_catalogue(x)
         self._set_fit_settings(enforce_sparsity, lr, n_steps, compile_model, CUDA, regularizer, reg_weight, reg_bic, \
