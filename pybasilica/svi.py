@@ -326,7 +326,11 @@ class PyBasilica():
             a = torch.matmul(torch.matmul(torch.diag(torch.sum(self.x, axis=1)), alpha), beta)
             if self.stage == "random_noise": a = a + epsilon
 
-            pyro.sample("obs", dist.Poisson(a).to_event(1), obs=self.x)
+            if cluster is None: 
+                pyro.sample("obs", dist.Poisson(a).to_event(1), obs=self.x)
+            else:
+                if self.dirichlet_prior: pyro.factor("loss", dist.Poisson(a).to_event(1).log_prob(self.x) + dist.Dirichlet(alpha_prior[z]).log_prob(alpha))
+                else: pyro.factor("loss", dist.Poisson(a).to_event(1).log_prob(self.x) + dist.Normal(alpha_prior[z], self.alpha_sigma_corr[z]).to_event(1).log_prob(alpha))
 
             if self.reg_weight > 0:
                 # lk =  dist.Poisson(a).log_prob(self.x)
