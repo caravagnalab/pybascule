@@ -290,7 +290,6 @@ class PyBasilica():
                             alpha = pyro.sample("latent_exposure", dist.Exponential(alpha_rate))
                         else:
                             alpha = pyro.sample("latent_exposure", dist.HalfNormal(torch.tensor(alpha_sigma, dtype=torch.float64)))
-                            # alpha = pyro.sample("latent_exposure", dist.HalfCauchy(torch.tensor(alpha_sigma, dtype=torch.float64)))
 
                 alpha = self._norm_and_clamp(alpha)
 
@@ -326,14 +325,14 @@ class PyBasilica():
             a = torch.matmul(torch.matmul(torch.diag(torch.sum(self.x, axis=1)), alpha), beta)
             if self.stage == "random_noise": a = a + epsilon
 
-            pyro.sample("obs", dist.Poisson(a).to_event(1), obs=self.x)
+            # pyro.sample("obs", dist.Poisson(a).to_event(1), obs=self.x)
 
-            # if cluster is None: 
-            #     pyro.sample("obs", dist.Poisson(a).to_event(1), obs=self.x)
-            # else:
-            #     # !!! Not sure about this !!!
-            #     if self.dirichlet_prior: pyro.factor("loss", dist.Poisson(a).to_event(1).log_prob(self.x) + dist.Dirichlet(alpha_prior[z]).log_prob(alpha))
-            #     else: pyro.factor("loss", dist.Poisson(a).to_event(1).log_prob(self.x) + dist.Normal(alpha_prior[z], self.alpha_sigma_corr[z]).to_event(1).log_prob(alpha))
+            if cluster is None: 
+                pyro.sample("obs", dist.Poisson(a).to_event(1), obs=self.x)
+            else:
+                # !!! Not sure about this !!!
+                if self.dirichlet_prior: pyro.factor("loss", dist.Poisson(a).to_event(1).log_prob(self.x) + dist.Dirichlet(alpha_prior[z]).log_prob(alpha))
+                else: pyro.factor("loss", dist.Poisson(a).to_event(1).log_prob(self.x) + dist.Normal(alpha_prior[z], self.alpha_sigma_corr[z]).to_event(1).log_prob(alpha))
 
             if self.reg_weight > 0:
                 # lk =  dist.Poisson(a).log_prob(self.x)
@@ -804,7 +803,7 @@ class PyBasilica():
 
             logprob_alpha = dist.Dirichlet(alpha_k).log_prob(alpha) if self.dirichlet_prior else dist.Normal(alpha_k, alpha_sigma[k,:]).log_prob(alpha).sum(axis=1)  # N dim vector
             logprob_lik = dist.Poisson( rate ).log_prob(M).sum(axis=1)  # N dim vector, summed over contexts
-            ll_k[k,:] = logprob_lik + torch.log(pi[k]) # + logprob_alpha
+            ll_k[k,:] = torch.log(pi[k]) + logprob_lik + logprob_alpha
 
         ll = self._logsumexp(ll_k)
 
