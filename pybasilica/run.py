@@ -39,7 +39,7 @@ def single_run(seed_list, kwargs):
     return bestRun
 
 
-def fit(x, k_list=[0,1,2,3,4,5], lr = 0.005, n_steps = 500, enumer = "parallel", cluster = None, groups = None, beta_fixed = None, 
+def fit(x, k_list=[0,1,2,3,4,5], lr = 0.005, n_steps = 500, enumer = "parallel", cluster = None, beta_fixed = None, 
         hyperparameters = None, dirichlet_prior = True, compile_model = False, CUDA = False, enforce_sparsity = False, nonparametric = False, 
         regularizer = "cosine", reg_weight = 0., regul_compare = None, regul_denovo = True, regul_fixed = True, stage = "", 
         seed = 10, store_parameters = False, save_all_fits=False, do_initial_fit = False, verbose = True):
@@ -60,7 +60,7 @@ def fit(x, k_list=[0,1,2,3,4,5], lr = 0.005, n_steps = 500, enumer = "parallel",
         "lr":lr,
         "n_steps":n_steps,
         "enumer":enumer,
-        "groups":groups,
+        # "groups":groups,
         "dirichlet_prior":dirichlet_prior,
         "beta_fixed":beta_fixed,
         "hyperparameters":hyperparameters,
