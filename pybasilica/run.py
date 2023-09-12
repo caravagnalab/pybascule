@@ -28,7 +28,12 @@ def single_run(seed_list, kwargs, kwargs_mixture):
             obj_mixt = PyBasilica_mixture(seed=seed, **kwargs_mixture)
             obj_mixt._fit()
 
-            obj.mixture_fit = obj_mixt.mixture_fit
+            obj.gradient_norms = {**obj.gradient_norms, **obj_mixt.gradient_norms}
+            if kwargs["store_parameters"]:
+                obj.train_params = [{**obj.train_params[i], **obj_mixt.train_params[i]} for i in range(len(obj.train_params))]
+            obj.losses_dmm = obj_mixt.losses
+            obj.likelihoods_dmm = obj_mixt.likelihoods
+            obj.regs_dmm = obj_mixt.regs
             obj.groups, obj.n_groups = obj_mixt.groups, obj_mixt.n_groups
             obj.params["alpha_prior"], obj.init_params["alpha_prior_param"] = obj_mixt.alpha_prior, obj_mixt.init_params["alpha_prior_param"]
             obj.params["pi"], obj.init_params["pi_param"] = obj_mixt.pi, obj_mixt.init_params["pi_param"]

@@ -199,7 +199,7 @@ class PyBasilica_mixture():
         self._init_km = km
 
         return km
-    
+
 
     def _initialize_params_clustering(self):
         pi = alpha_prior = None
@@ -225,7 +225,7 @@ class PyBasilica_mixture():
         return self.init_params
 
 
-    def _fit(self, set_attributes=True):
+    def _fit(self):
         pyro.clear_param_store()  # always clear the store before the inference
 
         if self.CUDA and torch.cuda.is_available():
@@ -252,32 +252,33 @@ class PyBasilica_mixture():
         for name, value in pyro.get_param_store().named_parameters():
             value.register_hook(lambda g, name=name: gradient_norms[name].append(g.norm().item()))
 
-        losses = list()
-        regs = list()
-        likelihoods = list()
-        train_params = list()
+        self.losses = list()
+        self.regs = list()
+        self.likelihoods = list()
+        self.train_params = list()
         for i in range(self.n_steps):   # inference - do gradient steps
             loss = svi.step()
-            losses.append(loss)
+            self.losses.append(loss)
 
-            likelihoods.append(self._likelihood_mixture(to_cpu=False))
+            self.likelihoods.append(self._likelihood_mixture(to_cpu=False))
 
-            # if self.store_parameters and i%50==0: 
-            #     train_params.append(self.get_param_dict(convert=True, all=False))
+            if self.store_parameters and i%50==0: 
+                self.train_params.append(self.get_param_dict(convert=True, all=False))
 
-        self.mixture_fit = {
-            "train_params":train_params,
-            "losses":losses,
-            "likelihoods":likelihoods,
-            "regs":regs,
-            "gradient_norms":dict(gradient_norms) if gradient_norms is not None else None
-        }
+        self.gradient_norms = dict(gradient_norms) if gradient_norms is not None else {}
 
         self._set_clusters()
         
         self.bic = self.aic = self.icl = self.reg_likelihood = None
         self.likelihood = self._likelihood_mixture(to_cpu=True).sum()
         self.set_scores()
+
+
+    def get_param_dict(self, convert=False, to_cpu=True, all=False):
+        params = dict()
+        params["alpha_prior"] = self._get_param("alpha_prior_param", normalize=True, convert=convert, to_cpu=to_cpu)
+        params["pi"] = self._get_param("pi_param", normalize=False, convert=convert, to_cpu=to_cpu)
+        return params
 
 
     def set_scores(self):
