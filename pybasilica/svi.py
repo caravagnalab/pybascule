@@ -226,7 +226,7 @@ class PyBasilica():
 
             if self.enforce_sparsity:
                 with pyro.plate("g", cluster):
-                    alpha_prior = pyro.sample("alpha_t", dist.Dirichlet(self.init_params["alpha_prior_param"]*scale_factor_centr))
+                    alpha_prior = pyro.sample("alpha_t", dist.Dirichlet(self.init_params["alpha_prior_param"] * scale_factor_centr))
                 # with pyro.plate("k1", self.K):
                 #     with pyro.plate("g", cluster):  # G x K matrix
                 #         alpha_prior = pyro.sample("alpha_t", dist.Beta(alpha_conc1, alpha_conc0))
@@ -719,7 +719,7 @@ class PyBasilica():
             alpha_prior_g = params["alpha_prior"][g]
 
             if self.dirichlet_prior:
-                alpha_prior_g = self._norm_and_clamp(alpha_prior_g) * self.hyperparameters["scale_factor"]
+                alpha_prior_g = self._norm_and_clamp(alpha_prior_g) * self.hyperparameters["scale_factor_alpha"]
                 lprob_alpha = dist.Dirichlet(alpha_prior_g).log_prob(params["alpha"])
             else:
                 sigma = self.alpha_sigma_corr.clone().detach()
