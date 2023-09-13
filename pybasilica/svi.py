@@ -34,7 +34,7 @@ class PyBasilica():
         cluster = None,
         two_steps = False, # if true, first run flat and then clustering
         hyperparameters = {"alpha_sigma":0.1, "alpha_p_sigma":1., "alpha_p_conc0":0.6, "alpha_p_conc1":0.6, "alpha_rate":5, 
-                           "beta_d_sigma":1, "eps_sigma":10, "pi_conc0":0.6, "scale_factor_centr":1000, "scale_factor_alpha":1000},
+                           "beta_d_sigma":1, "eps_sigma":10, "pi_conc0":0.6, "scale_factor_centroid":1000, "scale_factor_alpha":1000},
         dirichlet_prior = False,
         beta_fixed = None,
         compile_model = True,
@@ -57,7 +57,7 @@ class PyBasilica():
         ):
 
         self._hyperpars_default = {"alpha_sigma":1., "alpha_p_sigma":1., "alpha_p_conc0":0.6, "alpha_p_conc1":0.6, "alpha_rate":5, 
-                                   "beta_d_sigma":1, "eps_sigma":10, "pi_conc0":0.6, "scale_factor_centr":1000, "scale_factor_alpha":1000}
+                                   "beta_d_sigma":1, "eps_sigma":10, "pi_conc0":0.6, "scale_factor_centroid":1000, "scale_factor_alpha":1000}
         self.regul_denovo = regul_denovo
         self.regul_fixed = regul_fixed
         self.initial_fit = initial_fit
@@ -211,7 +211,7 @@ class PyBasilica():
         alpha_conc0, alpha_conc1 = self.hyperparameters["alpha_p_conc0"], self.hyperparameters["alpha_p_conc1"]
         beta_d_sigma = self.hyperparameters["beta_d_sigma"]
         pi_conc0 = self.hyperparameters["pi_conc0"]
-        scale_factor_centr, scale_factor_alpha = self.hyperparameters["scale_factor_centr"], self.hyperparameters["scale_factor_alpha"]
+        scale_factor_centroid, scale_factor_alpha = self.hyperparameters["scale_factor_centroid"], self.hyperparameters["scale_factor_alpha"]
 
         if self._noise_only: alpha = torch.zeros(self.n_samples, 1, dtype=torch.float64)
 
@@ -226,7 +226,7 @@ class PyBasilica():
 
             if self.enforce_sparsity:
                 with pyro.plate("g", cluster):
-                    alpha_prior = pyro.sample("alpha_t", dist.Dirichlet(self.init_params["alpha_prior_param"]*scale_factor_centr))
+                    alpha_prior = pyro.sample("alpha_t", dist.Dirichlet(self.init_params["alpha_prior_param"]*scale_factor_centroid))
                 # with pyro.plate("k1", self.K):
                 #     with pyro.plate("g", cluster):  # G x K matrix
                 #         alpha_prior = pyro.sample("alpha_t", dist.Beta(alpha_conc1, alpha_conc0))
