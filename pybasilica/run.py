@@ -35,10 +35,8 @@ def single_run(seed_list, kwargs, kwargs_mixture):
             obj.likelihoods_dmm = obj_mixt.likelihoods
             obj.regs_dmm = obj_mixt.regs
             obj.groups, obj.n_groups = obj_mixt.groups, obj_mixt.n_groups
-            obj.params["alpha_prior"], obj.init_params["alpha_prior_param"] = obj_mixt.alpha_prior, obj_mixt.init_params["alpha_prior_param"]
-            obj.params["pi"], obj.init_params["pi_param"] = obj_mixt.pi, obj_mixt.init_params["pi_param"]
-            obj.init_params["init_clusters"] = obj_mixt.init_params["init_clusters"]
-            obj.params["post_probs"] = obj_mixt.post_probs
+            obj.params = {**obj.params, **obj_mixt.params}
+            obj.init_params = {**obj.init_params, **obj_mixt.init_params}
 
         scores["seed_"+str(seed)] = {"bic":obj.bic, "aic":obj.aic, "icl":obj.icl, "llik":obj.likelihood, "reg_llik":obj.reg_likelihood}
 
@@ -55,7 +53,7 @@ def single_run(seed_list, kwargs, kwargs_mixture):
 
 
 def fit(x, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1, n_steps = 500, enumer = "parallel", cluster = None, beta_fixed = None, 
-        hyperparameters = None, dirichlet_prior = True, compile_model = False, CUDA = False, enforce_sparsity = False, nonparametric = False, 
+        hyperparameters = None, dirichlet_prior = True, compile_model = False, CUDA = False, enforce_sparsity = True, nonparametric = False, 
         regularizer = "cosine", reg_weight = 0., regul_compare = None, regul_denovo = True, regul_fixed = True, stage = "", 
         seed = 10, store_parameters = False, save_all_fits=False):
 
@@ -123,8 +121,8 @@ def fit(x, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1, n_steps = 500, e
             scores_k["K_"+str(k)+".G_"+str(cl)] = obj.runs_scores
             if save_all_fits: all_fits_stored["K_"+str(k)+".G_"+str(cl)] = obj
 
-    if bestRun is not None: bestRun.convert_to_dataframe(x, beta_fixed)
-    if secondBest is not None: secondBest.convert_to_dataframe(x, beta_fixed)
+    if bestRun is not None: bestRun.convert_to_dataframe(x)
+    if secondBest is not None: secondBest.convert_to_dataframe(x)
 
     bestRun.scores_K = scores_k
     bestRun.all_fits = all_fits_stored

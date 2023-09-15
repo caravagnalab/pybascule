@@ -31,9 +31,9 @@ class PyBasilica_mixture():
         optim_gamma = 0.1,
         enumer = "parallel",
         cluster = 5,
-        hyperparameters = {"pi_conc0":0.6, 
+        hyperparameters = {"pi_conc0":0.6, "alpha_p_conc0":0.6, "alpha_p_conc1":0.6,
                            "scale_factor_alpha":1000, "scale_factor_centroid":1000,
-                           "alpha_p_conc0":0.6, "alpha_p_conc1":0.6},
+                           "scale_tau":10},
         compile_model = True,
         CUDA = False,
         store_parameters = False,
@@ -44,7 +44,7 @@ class PyBasilica_mixture():
         ):
 
         self._hyperpars_default = {"pi_conc0":0.6, "scale_factor_alpha":1000, "scale_factor_centroid":1000, 
-                                   "alpha_p_conc0":0.6, "alpha_p_conc1":0.6}
+                                   "alpha_p_conc0":0.6, "alpha_p_conc1":0.6, "scale_tau":10}
         self._set_data_catalogue(alpha)
         self._set_fit_settings(lr=lr, optim_gamma=optim_gamma, n_steps=n_steps, \
                                compile_model=compile_model, CUDA=CUDA, store_parameters=store_parameters, 
@@ -90,7 +90,7 @@ class PyBasilica_mixture():
             alpha = torch.tensor(alpha.values, dtype=torch.float64)
         if not isinstance(alpha, torch.Tensor):
             alpha = torch.tensor(alpha, dtype=torch.float64)
-        
+
         self.alpha = alpha
         self.n_samples = alpha.shape[0]
         self.K = alpha.shape[1]
@@ -108,8 +108,11 @@ class PyBasilica_mixture():
     def model_mixture(self):
         cluster, n_samples = self.cluster, self.n_samples
         pi_conc0 = self.hyperparameters["pi_conc0"]
-        scale_factor_alpha = self.hyperparameters["scale_factor_alpha"]
-        scale_factor_centroid = self.hyperparameters["scale_factor_centroid"]
+        scale_factor_alpha, scale_factor_centroid = self.hyperparameters["scale_factor_alpha"], self.hyperparameters["scale_factor_centroid"]
+
+        tau = self.hyperparameters["scale_tau"]
+        scale_factor_centroid = torch.max(torch.tensor(1), torch.floor(torch.tensor((self._curr_step+1) / (self.n_steps / tau)))) * (scale_factor_centroid / tau)
+        scale_factor_alpha = torch.max(torch.tensor(1), torch.floor(torch.tensor((self._curr_step+1) / (self.n_steps / tau)))) * (scale_factor_alpha / tau)
 
         if self.nonparam:
             with pyro.plate("beta_plate", cluster-1):
@@ -118,33 +121,42 @@ class PyBasilica_mixture():
         else:
             pi = pyro.sample("pi", dist.Dirichlet(torch.ones(cluster, dtype=torch.float64)))
 
+        scale_factor_centroid = pyro.sample("scale_factor_centroid", dist.Normal(scale_factor_centroid, 50))
         with pyro.plate("g", cluster):
-            alpha_prior = pyro.sample("alpha_t", dist.Dirichlet(self.init_params["alpha_prior_param"]*scale_factor_centroid))
+            alpha_prior = pyro.sample("alpha_t", dist.Dirichlet(self.init_params["alpha_prior_param"] * scale_factor_centroid))
 
-        alpha_prior = alpha_prior * scale_factor_alpha  # Dirichlet
-
+        scale_factor_alpha = pyro.sample("scale_factor_alpha", dist.Normal(scale_factor_alpha, 50))
         with pyro.plate("n2", n_samples):
             z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":self.enumer})
 
-            pyro.sample("obs", dist.Dirichlet(alpha_prior[z]), obs=self.alpha)
+            pyro.sample("obs", dist.Dirichlet(alpha_prior[z] * scale_factor_alpha), obs=self.alpha)
 
 
     def guide_mixture(self):
         cluster, n_samples = self.cluster, self.n_samples
         init_params = self._initialize_params()
-        pi_param = pyro.param("pi_param", lambda: init_params["pi_param"], constraint=constraints.simplex)
 
+        scale_factor_alpha, scale_factor_centroid = self.hyperparameters["scale_factor_alpha"], self.hyperparameters["scale_factor_centroid"]
+        tau = self.hyperparameters["scale_tau"]
+
+        pi_param = pyro.param("pi_param", lambda: init_params["pi_param"], constraint=constraints.simplex)
         if self.nonparam:
-            pi_conc0 = pyro.param("pi_conc0", lambda: dist.Uniform(0, 2).sample([cluster-1]), 
+            pi_conc0 = pyro.param("pi_conc0_param", lambda: dist.Uniform(0, 2).sample([cluster-1]), 
                                   constraint=constraints.greater_than_eq(torch.finfo().tiny))
             with pyro.plate("beta_plate", cluster-1):
                 pyro.sample("beta", dist.Beta(torch.ones(cluster-1, dtype=torch.float64), pi_conc0))
         else:
             pyro.sample("pi", dist.Delta(pi_param).to_event(1))
 
+        scale_factor_centroid = pyro.param("scale_factor_centroid_param", torch.tensor(scale_factor_centroid / tau), constraint=constraints.positive)
+        pyro.sample("scale_factor_centroid", dist.Delta(scale_factor_centroid))
+
         alpha_prior_param = pyro.param("alpha_prior_param", lambda: init_params["alpha_prior_param"], constraint=constraints.simplex)
         with pyro.plate("g", cluster):
             pyro.sample("alpha_t", dist.Delta(alpha_prior_param).to_event(1))
+
+        scale_factor_alpha = pyro.param("scale_factor_alpha_param", torch.tensor(scale_factor_alpha / tau), constraint=constraints.positive)
+        pyro.sample("scale_factor_alpha", dist.Delta(scale_factor_alpha))
 
         with pyro.plate("n2", n_samples):
             pyro.sample("latent_class", dist.Categorical(pi_param), infer={"enumerate":self.enumer})
@@ -245,6 +257,7 @@ class PyBasilica_mixture():
 
         self._initialize_params()
 
+        self._curr_step = 0
         svi = SVI(self.model_mixture, self.guide_mixture, optimizer, loss=elbo)
         loss = svi.step()
 
@@ -257,27 +270,30 @@ class PyBasilica_mixture():
         self.likelihoods = list()
         self.train_params = list()
         for i in range(self.n_steps):   # inference - do gradient steps
+            self._curr_step = i
             loss = svi.step()
             self.losses.append(loss)
 
             self.likelihoods.append(self._likelihood_mixture(to_cpu=False))
 
             if self.store_parameters and i%50==0: 
-                self.train_params.append(self.get_param_dict(convert=True, all=False))
+                self.train_params.append(self.get_param_dict(convert=True, to_cpu=False))
 
         self.gradient_norms = dict(gradient_norms) if gradient_norms is not None else {}
 
-        self._set_clusters()
-        
+        self.params = {**self._set_clusters(to_cpu=True), **self.get_param_dict(convert=True, to_cpu=True)}
         self.bic = self.aic = self.icl = self.reg_likelihood = None
         self.likelihood = self._likelihood_mixture(to_cpu=True).sum()
         self.set_scores()
 
 
-    def get_param_dict(self, convert=False, to_cpu=True, all=False):
+    def get_param_dict(self, convert=False, to_cpu=True):
         params = dict()
         params["alpha_prior"] = self._get_param("alpha_prior_param", normalize=True, convert=convert, to_cpu=to_cpu)
         params["pi"] = self._get_param("pi_param", normalize=False, convert=convert, to_cpu=to_cpu)
+        params["scale_factor_alpha"] = self._get_param("scale_factor_alpha_param", convert=convert, to_cpu=to_cpu)
+        params["scale_factor_centroid"] = self._get_param("scale_factor_centroid_param", convert=convert, to_cpu=to_cpu)
+        params["pi_conc0"] = self._get_param("pi_conc0_param", convert=convert, to_cpu=to_cpu)
         return params
 
 
@@ -307,17 +323,17 @@ class PyBasilica_mixture():
         alpha = self._to_cpu(self.alpha, move=to_cpu)
         alpha_centroid = self._get_param("alpha_prior_param", normalize=True)
         pi = self._get_param("pi_param")
+        scale_factor_alpha = self._get_param("scale_factor_alpha_param", normalize=False)
+        if scale_factor_alpha is None: scale_factor_alpha = self.hyperparameters["scale_factor_alpha"]
 
         llik = torch.zeros(self.cluster, self.n_samples)
-        # for n in range(self.n_samples):
         for g in range(self.cluster):
             alpha_prior_g = alpha_centroid[g]
 
             # sigma = self.alpha_sigma_corr.clone().detach()
             # lprob_alpha = dist.Normal(alpha_prior_g, sigma[g]).log_prob(alpha).sum(axis=1)
 
-            alpha_prior_g = self._norm_and_clamp(alpha_prior_g) * self.hyperparameters["scale_factor_alpha"]
-            lprob_alpha = dist.Dirichlet(alpha_prior_g).log_prob(alpha)
+            lprob_alpha = dist.Dirichlet(alpha_prior_g * scale_factor_alpha).log_prob(alpha)
 
             llik[g, :] = torch.log(pi[g]) + lprob_alpha
 
@@ -326,7 +342,6 @@ class PyBasilica_mixture():
 
     def _compute_posterior_probs(self, to_cpu=True, compute_exp=True):
         ll_k = self._likelihood_mixture(to_cpu=to_cpu)
-
         ll = self._logsumexp(ll_k)
 
         probs = torch.exp(ll_k - ll) if compute_exp else ll_k - ll
@@ -358,9 +373,11 @@ class PyBasilica_mixture():
 
 
     def _set_clusters(self, to_cpu=True):
-        self.alpha_prior = self._get_param("alpha_prior_param", normalize=True, to_cpu=to_cpu)
-        self.pi = self._get_param("pi_param", normalize=False, to_cpu=to_cpu)
-        self.groups, self.post_probs = self._compute_posterior_probs(to_cpu=to_cpu)
+        params = dict()
+        # self.alpha_prior = self._get_param("alpha_prior_param", normalize=True, to_cpu=to_cpu)
+        # params["pi"] = self._get_param("pi_param", normalize=False, to_cpu=to_cpu)
+        self.groups, params["post_probs"] = self._compute_posterior_probs(to_cpu=to_cpu)
+        return params
 
 
     def _set_bic(self):
@@ -408,7 +425,7 @@ class PyBasilica_mixture():
 
     def _number_of_params(self):
         n_grps = len(np.unique(np.array(self._to_cpu(self.groups, move=True))))
-        k = n_grps + self.alpha_prior.shape[1] * n_grps
+        k = n_grps + self.params["alpha_prior"].shape[1] * n_grps
         return k
 
 
