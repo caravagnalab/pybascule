@@ -154,8 +154,8 @@ def fit(x, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma=0.1, n_steps = 500, enu
                 progress.console.print(f"Running on k_denovo={k} | BIC={obj.bic}")
                 progress.update(task, advance=1)
 
-            if bestRun is not None: bestRun.convert_to_dataframe(x, beta_fixed)
-            if secondBest is not None: secondBest.convert_to_dataframe(x, beta_fixed)
+            if bestRun is not None: bestRun.convert_to_dataframe(x)
+            if secondBest is not None: secondBest.convert_to_dataframe(x)
 
         from uniplot import plot
         console.print('\n-------------------------------------------------------\n\n[bold red]Best Model:')
@@ -204,8 +204,8 @@ def fit(x, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma=0.1, n_steps = 500, enu
                 scores_k["K_"+str(k)+".G_"+str(cl)] = obj.runs_scores
                 if save_all_fits: all_fits_stored["K_"+str(k)+".G_"+str(cl)] = obj
 
-        if bestRun is not None: bestRun.convert_to_dataframe(x, beta_fixed)
-        if secondBest is not None: secondBest.convert_to_dataframe(x, beta_fixed)
+        if bestRun is not None: bestRun.convert_to_dataframe(x)
+        if secondBest is not None: secondBest.convert_to_dataframe(x)
 
     bestRun.scores_K = scores_k
     bestRun.all_fits = all_fits_stored

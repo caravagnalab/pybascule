@@ -142,6 +142,11 @@ class PyBasilica():
 
     def _set_beta_fixed(self, beta_fixed):
         try:
+            if isinstance(beta_fixed, pd.DataFrame):
+                self.fixed_names = list(beta_fixed.index)
+            else:
+                self.fixed_names = ["F"+str(f+1) for f in range(beta_fixed.shape[0])]
+
             self.beta_fixed = torch.tensor(beta_fixed.values, dtype=torch.float64)
             if len(self.beta_fixed.shape)==1:
                 self.beta_fixed = self.beta_fixed.reshape(1, self.beta_fixed.shape[0])
@@ -870,29 +875,20 @@ class PyBasilica():
         if move and self.CUDA and torch.cuda.is_available() and isinstance(param, torch.Tensor):
             return param.cuda()
         return param
+    
 
 
-    def convert_to_dataframe(self, x, beta_fixed):
-
-        if isinstance(self.beta_fixed, pd.DataFrame):
-            self.beta_fixed = torch.tensor(self.beta_fixed.values, dtype=torch.float64)
-
+    def convert_to_dataframe(self, x):
         # mutations catalogue
         self.x = x
-        sample_names, mutation_features = list(x.index), list(x.columns)
+        sample_names, contexts = list(x.index), list(x.columns)
+        fixed_names = self.fixed_names
+        denovo_names = ["D"+str(d+1) for d in range(self.k_denovo)] if self.k_denovo>0 else []
 
         if self.groups is not None: self.groups = np.array(self.groups)
 
-        # fixed signatures
-        fixed_names = []
-        if self.beta_fixed is not None and torch.sum(self.beta_fixed) > 0:
-            fixed_names = list(beta_fixed.index)
-            self.beta_fixed = beta_fixed
-
-        # denovo signatures
-        denovo_names = []
-        if self.k_denovo > 0:
-            denovo_names = ["D"+str(d+1) for d in range(self.k_denovo)]
+        if self.beta_fixed is not None and isinstance(self.beta_fixed, torch.Tensor) and torch.sum(self.beta_fixed) > 0:
+            self.beta_fixed = pd.DataFrame(self.beta_fixed, index=fixed_names, columns=contexts)
 
         for parname, par in self.params.items():
             if par is None: continue
@@ -900,23 +896,67 @@ class PyBasilica():
             if parname == "alpha": 
                 self.params[parname] = pd.DataFrame(np.array(par), index=sample_names , columns=fixed_names + denovo_names)
             elif parname == "beta_d": 
-                self.params[parname] = pd.DataFrame(np.array(par), index=denovo_names, columns=mutation_features)
+                self.params[parname] = pd.DataFrame(np.array(par), index=denovo_names, columns=contexts)
             elif parname == "beta_f": 
                 self.params[parname] = self.beta_fixed
             elif parname == "pi": 
                 self.params[parname] = par.tolist() if isinstance(par, torch.Tensor) else par
             elif parname == "lambda_epsilon":
-                self.params[parname] = pd.DataFrame(np.array(par), index=sample_names, columns=mutation_features)
+                self.params[parname] = pd.DataFrame(np.array(par), index=sample_names, columns=contexts)
             elif (parname == "alpha_prior" or parname == "alpha_prior_unn"): 
                 self.params[parname] = pd.DataFrame(np.array(par), index=range(self.n_groups), columns=fixed_names + denovo_names)
             elif parname == "post_probs" and isinstance(par, torch.Tensor):
                 self.params[parname] = pd.DataFrame(np.array(torch.transpose(par, dim0=1, dim1=0)), index=sample_names , columns=range(self.n_groups))
 
         self._set_init_params(sample_names=sample_names, fixed_names=fixed_names, 
-                              denovo_names=denovo_names, mutation_features=mutation_features)
+                              denovo_names=denovo_names, contexts=contexts)
 
 
-    def _set_init_params(self, sample_names, fixed_names, denovo_names, mutation_features):
+    # def convert_to_dataframe(self, x, beta_fixed):
+
+    #     if isinstance(self.beta_fixed, pd.DataFrame):
+    #         self.beta_fixed = torch.tensor(self.beta_fixed.values, dtype=torch.float64)
+
+    #     # mutations catalogue
+    #     self.x = x
+    #     sample_names, mutation_features = list(x.index), list(x.columns)
+
+    #     if self.groups is not None: self.groups = np.array(self.groups)
+
+    #     # fixed signatures
+    #     fixed_names = []
+    #     if self.beta_fixed is not None and torch.sum(self.beta_fixed) > 0:
+    #         fixed_names = list(beta_fixed.index)
+    #         self.beta_fixed = beta_fixed
+
+    #     # denovo signatures
+    #     denovo_names = []
+    #     if self.k_denovo > 0:
+    #         denovo_names = ["D"+str(d+1) for d in range(self.k_denovo)]
+
+    #     for parname, par in self.params.items():
+    #         if par is None: continue
+    #         par = self._to_cpu(par, move=True)
+    #         if parname == "alpha": 
+    #             self.params[parname] = pd.DataFrame(np.array(par), index=sample_names , columns=fixed_names + denovo_names)
+    #         elif parname == "beta_d": 
+    #             self.params[parname] = pd.DataFrame(np.array(par), index=denovo_names, columns=mutation_features)
+    #         elif parname == "beta_f": 
+    #             self.params[parname] = self.beta_fixed
+    #         elif parname == "pi": 
+    #             self.params[parname] = par.tolist() if isinstance(par, torch.Tensor) else par
+    #         elif parname == "lambda_epsilon":
+    #             self.params[parname] = pd.DataFrame(np.array(par), index=sample_names, columns=mutation_features)
+    #         elif (parname == "alpha_prior" or parname == "alpha_prior_unn"): 
+    #             self.params[parname] = pd.DataFrame(np.array(par), index=range(self.n_groups), columns=fixed_names + denovo_names)
+    #         elif parname == "post_probs" and isinstance(par, torch.Tensor):
+    #             self.params[parname] = pd.DataFrame(np.array(torch.transpose(par, dim0=1, dim1=0)), index=sample_names , columns=range(self.n_groups))
+
+    #     self._set_init_params(sample_names=sample_names, fixed_names=fixed_names, 
+    #                           denovo_names=denovo_names, mutation_features=mutation_features)
+
+
+    def _set_init_params(self, sample_names, fixed_names, denovo_names, contexts):
         # return
         for k, v_tmp in self.init_params.items():
             v = self._to_cpu(v_tmp, move=True)
@@ -925,11 +965,11 @@ class PyBasilica():
             if k == "alpha":
                 self.init_params[k] = pd.DataFrame(np.array(v), index=sample_names, columns=fixed_names + denovo_names)
             elif k == "beta_dn_param":
-                self.init_params[k] = pd.DataFrame(np.array(v), index=denovo_names, columns=mutation_features)
+                self.init_params[k] = pd.DataFrame(np.array(v), index=denovo_names, columns=contexts)
             elif k == "alpha_prior_param":
                 self.init_params[k] = pd.DataFrame(np.array(v), index=range(self.n_groups), columns=fixed_names + denovo_names)
             elif k == "epsilon_var":
-                self.init_params[k] = pd.DataFrame(np.array(v), index=sample_names, columns=mutation_features)
+                self.init_params[k] = pd.DataFrame(np.array(v), index=sample_names, columns=contexts)
             else:
                 self.init_params[k] = np.array(v)
 
