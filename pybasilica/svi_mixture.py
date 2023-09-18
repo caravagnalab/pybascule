@@ -240,6 +240,8 @@ class PyBasilica_mixture():
     def _fit(self):
         pyro.clear_param_store()  # always clear the store before the inference
 
+        self.alpha = self._to_gpu(self.alpha)
+
         if self.CUDA and torch.cuda.is_available():
             torch.set_default_tensor_type('torch.cuda.FloatTensor')
         else:
@@ -274,13 +276,14 @@ class PyBasilica_mixture():
             loss = svi.step()
             self.losses.append(loss)
 
-            self.likelihoods.append(self._likelihood_mixture(to_cpu=False))
+            self.likelihoods.append(self._likelihood_mixture(to_cpu=False).sum())
 
             if self.store_parameters and i%50==0: 
                 self.train_params.append(self.get_param_dict(convert=True, to_cpu=False))
 
-        self.gradient_norms = dict(gradient_norms) if gradient_norms is not None else {}
+        self.alpha = self._to_cpu(self.alpha)
 
+        self.gradient_norms = dict(gradient_norms) if gradient_norms is not None else {}
         self.params = {**self._set_clusters(to_cpu=True), **self.get_param_dict(convert=True, to_cpu=True)}
         self.bic = self.aic = self.icl = self.reg_likelihood = None
         self.likelihood = self._likelihood_mixture(to_cpu=True).sum()
@@ -321,17 +324,14 @@ class PyBasilica_mixture():
 
     def _likelihood_mixture(self, to_cpu=False):
         alpha = self._to_cpu(self.alpha, move=to_cpu)
-        alpha_centroid = self._get_param("alpha_prior_param", normalize=True)
-        pi = self._get_param("pi_param")
-        scale_factor_alpha = self._get_param("scale_factor_alpha_param", normalize=False)
+        alpha_centroid = self._get_param("alpha_prior_param", normalize=True, to_cpu=to_cpu)
+        pi = self._get_param("pi_param", to_cpu=to_cpu)
+        scale_factor_alpha = self._get_param("scale_factor_alpha_param", normalize=False, to_cpu=to_cpu)
         if scale_factor_alpha is None: scale_factor_alpha = self.hyperparameters["scale_factor_alpha"]
 
         llik = torch.zeros(self.cluster, self.n_samples)
         for g in range(self.cluster):
             alpha_prior_g = alpha_centroid[g]
-
-            # sigma = self.alpha_sigma_corr.clone().detach()
-            # lprob_alpha = dist.Normal(alpha_prior_g, sigma[g]).log_prob(alpha).sum(axis=1)
 
             lprob_alpha = dist.Dirichlet(alpha_prior_g * scale_factor_alpha).log_prob(alpha)
 

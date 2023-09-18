@@ -151,8 +151,8 @@ class PyBasilica():
             first = [i for i in self.fixed_names if i in ["SBS1","SBS5"]]
             others = [i for i in self.fixed_names if i not in ["SBS1","SBS5"]]
             beta_fixed = beta_fixed.loc[first + others]
-            self.hyperparameters["alpha_conc"] = torch.concat((torch.ones(len(first))*self.hyperparameters["alpha_conc"], 
-                                                               torch.ones(len(others) + self.k_denovo)))
+            self.hyperparameters["alpha_conc"] = self._to_gpu(torch.concat((torch.ones(len(first))*self.hyperparameters["alpha_conc"], 
+                                                              torch.ones(len(others) + self.k_denovo))))
             beta_fixed = beta_fixed.values
 
         self.beta_fixed = torch.tensor(beta_fixed, dtype=torch.float64)
