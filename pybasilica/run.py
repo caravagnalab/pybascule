@@ -2,15 +2,17 @@
 from rich.console import Console
 from rich.table import Table
 from rich import box
-import time
+import pandas as pd
+import numpy as np
 from rich.progress import Progress, BarColumn, TextColumn, TaskProgressColumn, TimeRemainingColumn, SpinnerColumn, RenderableColumn
 from rich.live import Live
 from rich.table import Table
 from sys import maxsize
 
 from pybasilica.svi import PyBasilica
+from pybasilica.svi_mixture import PyBasilica_mixture
 
-def single_run(seed_list, kwargs):
+def single_run(seed_list, kwargs, kwargs_mixture):
     minBic = maxsize
     bestRun = None
     runs_seed = dict()
@@ -18,14 +20,25 @@ def single_run(seed_list, kwargs):
     scores = dict()
 
     for seed in seed_list:
-        print("Running model with " + str(kwargs["k_denovo"]) + \
-              " signatures, " + str(kwargs["cluster"]) + " groups and " + str(seed) + " seed\n")
-
         obj = PyBasilica(seed=seed, **kwargs)
         obj._fit()
 
+        if kwargs_mixture["cluster"] is not None:
+            kwargs_mixture["alpha"] = obj.params["alpha"]
+            obj_mixt = PyBasilica_mixture(seed=seed, **kwargs_mixture)
+            obj_mixt._fit()
+
+            obj.gradient_norms = {**obj.gradient_norms, **obj_mixt.gradient_norms}
+            if kwargs["store_parameters"]:
+                obj.train_params = [{**obj.train_params[i], **obj_mixt.train_params[i]} for i in range(len(obj.train_params))]
+            obj.losses_dmm = obj_mixt.losses
+            obj.likelihoods_dmm = obj_mixt.likelihoods
+            obj.regs_dmm = obj_mixt.regs
+            obj.groups, obj.n_groups = obj_mixt.groups, obj_mixt.n_groups
+            obj.params = {**obj.params, **obj_mixt.params}
+            obj.init_params = {**obj.init_params, **obj_mixt.init_params}
+
         scores["seed_"+str(seed)] = {"bic":obj.bic, "aic":obj.aic, "icl":obj.icl, "llik":obj.likelihood, "reg_llik":obj.reg_likelihood}
-        # scores["seed_"+str(seed)] = {"bic":obj.bic, "llik":obj.likelihood}
 
         if bestRun is None or obj.bic < minBic:
             minBic = obj.bic
@@ -39,29 +52,23 @@ def single_run(seed_list, kwargs):
     return bestRun
 
 
-def fit(x, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma=0.1, n_steps = 500, enumer = "parallel", cluster = None, beta_fixed = None, 
-        hyperparameters = None, dirichlet_prior = True, compile_model = False, CUDA = False, enforce_sparsity = False, nonparametric = False, 
+def fit(x, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1, n_steps = 500, enumer = "parallel", cluster = None, beta_fixed = None, 
+        hyperparameters = None, dirichlet_prior = True, compile_model = False, CUDA = False, enforce_sparsity = True, nonparametric = False, 
         regularizer = "cosine", reg_weight = 0., regul_compare = None, regul_denovo = True, regul_fixed = True, stage = "", 
-        seed = 10, store_parameters = False, save_all_fits=False, do_initial_fit = False, verbose = True):
+        seed = 10, store_parameters = False, save_all_fits=False):
 
     if isinstance(seed, int): seed = [seed]
-
-    if isinstance(cluster, int): cluster = [cluster]
-
-    if isinstance(k_list, list):
-        if len(k_list) > 0: pass
-        else: raise Exception("k_list is an empty list!")
-    elif isinstance(k_list, int):
-        k_list = [k_list]
-    else: raise Exception("invalid k_list datatype")
+    if isinstance(cluster, int) and cluster < 1: cluster = None
+    elif isinstance(cluster, int): cluster = [cluster]
+    if isinstance(k_list, int): k_list = [k_list]
 
     kwargs = {
         "x":x,
+        "cluster":None,
         "lr":lr,
         "optim_gamma":optim_gamma,
         "n_steps":n_steps,
         "enumer":enumer,
-        # "groups":groups,
         "dirichlet_prior":dirichlet_prior,
         "beta_fixed":beta_fixed,
         "hyperparameters":hyperparameters,
@@ -74,138 +81,49 @@ def fit(x, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma=0.1, n_steps = 500, enu
         "stage":stage,
         "regul_compare":regul_compare,
         "regul_denovo":regul_denovo,
-        "regul_fixed":regul_fixed,
-        "nonparam":nonparametric,
+        "regul_fixed":regul_fixed
         }
 
+    kwargs_mixture = {
+        "lr":lr,
+        "optim_gamma":optim_gamma,
+        "n_steps":n_steps,
+        "enumer":enumer,
+        "hyperparameters":hyperparameters,
+        "compile_model":compile_model,
+        "CUDA":CUDA,
+        "store_parameters":store_parameters,
+        "nonparam":nonparametric
+    }
+
+    if nonparametric and isinstance(cluster, list): cluster = [max(cluster)]
     has_clusters = True
-    if cluster is None: 
-        cluster = [1]
-        has_clusters = False
-    
-    elif nonparametric and isinstance(cluster, list):
-        cluster = [max(cluster)]
+    if cluster is None: has_clusters, cluster = False, [1]
 
-    if verbose:
-    # Verbose run
+    minBic = maxsize
+    secondMinBic = maxsize
+    bestRun, secondBest = None, None
 
-        console = Console()
-        if beta_fixed is None:
-            betaFixed = "No fixed signatures"
-        elif len(list(beta_fixed.index.values)) > 10:
-            betaFixed = f'{len(list(beta_fixed.index.values))} signatures, Too many to fit here'
-        else:
-            betaFixed = ', '.join(list(beta_fixed.index.values))
+    scores_k, all_fits_stored = dict(), dict()
+    for k in k_list:
+        kwargs["k_denovo"] = k
 
-        table = Table(title="Information", show_header=False, box=box.ASCII, show_lines=False)
-        table.add_column("Variable", style="cyan")
-        table.add_column("Values", style="magenta")
-        table.add_row("No. of samples", str(int(x.shape[0])))
-        table.add_row("learning rate", str(lr))
-        table.add_row("k denovo list", ', '.join(map(str, k_list)))
-        table.add_row("fixed signatures", betaFixed)
-        table.add_row("Max inference steps", str(n_steps))
-        console.print('\n', table)
+        for cl in list(cluster):
+            kwargs_mixture["cluster"] = cl if has_clusters else None
 
-        myProgress = Progress(
-            TextColumn('{task.description} [bold blue] inference {task.completed}/{task.total} done'), 
-            BarColumn(), 
-            TaskProgressColumn(), 
-            TimeRemainingColumn(), 
-            SpinnerColumn(), 
-            RenderableColumn())
+            obj = single_run(seed_list=seed, kwargs=kwargs, kwargs_mixture=kwargs_mixture)
 
-        with myProgress as progress:
+            if obj.bic < minBic:
+                minBic, bestRun = obj.bic, obj
+            if minBic == secondMinBic or (obj.bic > minBic and obj.bic < secondMinBic):
+                secondMinBic, secondBest = obj.bic, obj
 
-            task = progress.add_task("[red]running...", total=len(k_list))
+            scores_k["K_"+str(k)+".G_"+str(cl)] = obj.runs_scores
+            if save_all_fits: all_fits_stored["K_"+str(k)+".G_"+str(cl)] = obj
 
-            minBic = maxsize
-            secondMinBic = maxsize
-            bestRun, secondBest = None, None
+    if bestRun is not None: bestRun.convert_to_dataframe(x)
+    if secondBest is not None: secondBest.convert_to_dataframe(x)
 
-            scores_k, all_fits_stored = dict(), dict()
-            for k in k_list:
-                kwargs["k_denovo"] = k
-
-                if has_clusters and do_initial_fit:
-                    kwargs_init = {key: value for key, value in kwargs.items()}
-                    kwargs_init["cluster"], kwargs_init["hyperparameters"], kwargs_init["enforce_sparsity"] = None, None, False
-                    obj_init = single_run(seed_list=seed, save_runs_seed=False, kwargs=kwargs_init)
-                    kwargs["initial_fit"] = obj_init
-
-                for cl in list(cluster):
-                    kwargs["cluster"] = cl if has_clusters else None
-
-                    try:
-                        obj = single_run(seed_list=seed, kwargs=kwargs)
-
-                        if obj.bic < minBic:
-                            minBic = obj.bic
-                            bestRun = obj
-                        if minBic == secondMinBic or (obj.bic > minBic and obj.bic < secondMinBic):
-                            secondMinBic = obj.bic
-                            secondBest = obj
-                    except:
-                        raise Exception("Failed to run for k_denovo:{k}!")
-                
-                    scores_k["K_"+str(k)+".G_"+str(cl)] = obj.runs_scores
-                    if save_all_fits: all_fits_stored["K_"+str(k)+".G_"+str(cl)] = obj
-                
-                progress.console.print(f"Running on k_denovo={k} | BIC={obj.bic}")
-                progress.update(task, advance=1)
-
-            if bestRun is not None: bestRun.convert_to_dataframe(x)
-            if secondBest is not None: secondBest.convert_to_dataframe(x)
-
-        from uniplot import plot
-        console.print('\n-------------------------------------------------------\n\n[bold red]Best Model:')
-        console.print(f"k_denovo: {bestRun.k_denovo}\nBIC: {bestRun.bic}\nStopped at {len(bestRun.losses)}th step\n")
-        plot(
-            [bestRun.losses, bestRun.likelihoods], 
-            title="Loss & Log-Likelihood vs SVI steps", 
-            width=40, height=10, color=True, legend_labels=['loss', 'log-likelihood'], interactive=False, 
-            x_gridlines=[0,50,100,150,200,250,300,350,400,450,500], 
-            y_gridlines=[max(bestRun.losses)/2, min(bestRun.likelihoods)/2])
-        console.print('\n')
-
-    else:
-    # Non-verbose run
-
-        minBic = maxsize
-        secondMinBic = maxsize
-        bestRun, secondBest = None, None
-
-        scores_k, all_fits_stored = dict(), dict()
-        for k in k_list:
-            kwargs["k_denovo"] = k
-
-            for cl in list(cluster):
-                kwargs["cluster"] = cl if has_clusters else None
-
-                if has_clusters and do_initial_fit:
-                    kwargs_init = {key: value for key, value in kwargs.items()}
-                    kwargs_init["cluster"], kwargs_init["hyperparameters"], kwargs_init["enforce_sparsity"] = None, None, False
-                    obj_init = single_run(seed_list=seed, save_runs_seed=False, kwargs=kwargs_init)
-                    kwargs["initial_fit"] = obj_init
-
-                try:
-                    obj = single_run(seed_list=seed, kwargs=kwargs)
-
-                    if obj.bic < minBic:
-                        minBic = obj.bic
-                        bestRun = obj
-                    if minBic == secondMinBic or (obj.bic > minBic and obj.bic < secondMinBic):
-                        secondMinBic = obj.bic
-                        secondBest = obj
-
-                except:
-                    raise Exception("Failed to run for k_denovo:{k}!")
-
-                scores_k["K_"+str(k)+".G_"+str(cl)] = obj.runs_scores
-                if save_all_fits: all_fits_stored["K_"+str(k)+".G_"+str(cl)] = obj
-
-        if bestRun is not None: bestRun.convert_to_dataframe(x)
-        if secondBest is not None: secondBest.convert_to_dataframe(x)
 
     bestRun.scores_K = scores_k
     bestRun.all_fits = all_fits_stored
