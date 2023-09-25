@@ -61,7 +61,6 @@ class PyBasilica():
         self.regul_fixed = regul_fixed
         self.initial_fit = initial_fit
         self.dirichlet_prior = dirichlet_prior
-        self.two_steps = two_steps
 
         self._set_data_catalogue(x)
         self._set_fit_settings(enforce_sparsity=enforce_sparsity, lr=lr, optim_gamma=optim_gamma, n_steps=n_steps, \
