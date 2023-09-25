@@ -290,7 +290,7 @@ class PyBasilica_mixture():
         self.gradient_norms = dict(gradient_norms) if gradient_norms is not None else {}
         self.params = {**self._set_clusters(to_cpu=True), **self.get_param_dict(convert=True, to_cpu=True)}
         self.bic = self.aic = self.icl = self.reg_likelihood = None
-        self.likelihood = self._likelihood_mixture(to_cpu=True).sum()
+        self.likelihood = self._likelihood_mixture(to_cpu=True).sum().item()
         self.set_scores()
 
 

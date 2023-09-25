@@ -68,12 +68,12 @@ def single_run(seed_list, kwargs, classname):
     for seed in seed_list:
         obj = classname(seed=seed, **kwargs)
         obj._fit()
-        scores["seed_"+str(seed)] = {"bic":obj.bic, "aic":obj.aic, "icl":obj.icl, "llik":obj.likelihood, "reg_llik":obj.reg_likelihood}
+        scores["seed."+str(seed)] = {"bic":obj.bic, "aic":obj.aic, "icl":obj.icl, "llik":obj.likelihood, "reg_llik":obj.reg_likelihood}
         if bestRun is None or obj.bic < minBic:
             minBic = obj.bic
             bestRun = obj
 
-        runs_seed["seed_"+str(seed)] = obj
+        runs_seed["seed."+str(seed)] = obj
 
     bestRun.runs_scores = scores
     bestRun.runs_seed = runs_seed
@@ -172,8 +172,8 @@ def select_best(parlist, parname, seed, kwargs, classname, save_all_fits):
         if minBic == secondMinBic or (obj.bic > minBic and obj.bic < secondMinBic):
             secondMinBic, secondBest = obj.bic, obj
 
-        scores_k[parname+"_"+str(k)] = obj.runs_scores
-        if save_all_fits: all_fits_stored[parname+"_"+str(k)] = obj
+        scores_k[parname+"."+str(k)] = obj.runs_scores
+        if save_all_fits: all_fits_stored[parname+"."+str(k)] = obj
 
     return bestRun, secondBest, scores_k, all_fits_stored
 
