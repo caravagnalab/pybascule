@@ -124,6 +124,7 @@ def fit(x, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1, n_steps = 500, e
     if bestRun is not None: bestRun.convert_to_dataframe(x)
     if secondBest is not None: secondBest.convert_to_dataframe(x)
 
+
     bestRun.scores_K = scores_k
     bestRun.all_fits = all_fits_stored
 

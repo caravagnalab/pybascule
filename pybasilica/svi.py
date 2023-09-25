@@ -40,7 +40,7 @@ class PyBasilica():
         CUDA = False,
         enforce_sparsity = True,
         store_parameters = False,
-        
+
         reg_weight = 0.,
         regularizer = "cosine",
         regul_denovo = True,
@@ -61,6 +61,7 @@ class PyBasilica():
         self.regul_fixed = regul_fixed
         self.initial_fit = initial_fit
         self.dirichlet_prior = dirichlet_prior
+        self.two_steps = two_steps
 
         self._set_data_catalogue(x)
         self._set_fit_settings(enforce_sparsity=enforce_sparsity, lr=lr, optim_gamma=optim_gamma, n_steps=n_steps, \
@@ -232,6 +233,7 @@ class PyBasilica():
 
             if self.enforce_sparsity:
                 scale_factor_centroid = pyro.sample("scale_factor_centroid", dist.Normal(scale_factor_centroid, 100))
+
                 with pyro.plate("g", cluster):
                     alpha_prior = pyro.sample("alpha_t", dist.Dirichlet(self.init_params["alpha_prior_param"] * scale_factor_centroid))
                 # with pyro.plate("k1", self.K):
@@ -249,6 +251,7 @@ class PyBasilica():
             if not self.dirichlet_prior: # Normal or Cauchy
                 q05 = alpha_prior - alpha_sigma
                 q95 = alpha_prior + alpha_sigma
+
 
                 self.alpha_sigma_corr = (q95 - q05) / ( dist.Normal(alpha_prior, 1).icdf(torch.tensor(1-0.05/2)) -\
                                                        dist.Normal(alpha_prior, 1).icdf(torch.tensor(0.05/2)) )
@@ -295,6 +298,7 @@ class PyBasilica():
 
         if self.cluster is not None and self.dirichlet_prior: 
             scale_factor_alpha = pyro.sample("scale_factor_alpha", dist.Normal(scale_factor_alpha, 100))
+
         # Observations
         with pyro.plate("n2", n_samples):
             if cluster is not None:
@@ -326,6 +330,7 @@ class PyBasilica():
         n_samples, k_denovo = self.n_samples, self.k_denovo
         cluster = self.cluster
         init_params = self._initialize_params()
+        scale_factor_centroid, scale_factor_alpha = self.hyperparameters["scale_factor_centroid"], self.hyperparameters["scale_factor_alpha"]
 
         if cluster is not None:
             if not self._noise_only:
@@ -342,6 +347,7 @@ class PyBasilica():
                 if self.enforce_sparsity:
                     scale_factor_centroid = pyro.param("scale_factor_centr_param", torch.tensor(scale_factor_centroid), constraint=constraints.positive)
                     pyro.sample("scale_factor_centroid", dist.Delta(scale_factor_centroid))
+
 
                     alpha_prior_param = pyro.param("alpha_prior_param", lambda: init_params["alpha_prior_param"], constraint=constraints.simplex)
                     with pyro.plate("g", cluster):
@@ -361,11 +367,11 @@ class PyBasilica():
                     scale_factor_alpha = pyro.param("scale_factor_alpha_param", torch.tensor(scale_factor_alpha), constraint=constraints.positive)
                     pyro.sample("scale_factor_alpha", dist.Delta(scale_factor_alpha))
 
-
                 with pyro.plate("n2", n_samples):
                     z = pyro.sample("latent_class", dist.Categorical(pi_param), infer={"enumerate":self.enumer})
 
                     if self.dirichlet_prior: 
+
                         alpha = pyro.param("alpha", lambda: alpha_prior_param[z.long()] * scale_factor_alpha, constraint=constraints.simplex)  # Dirichlet
                     else: 
                         alpha = pyro.param("alpha", lambda: alpha_prior_param[z.long()], constraint=constraints.greater_than_eq(0))  # Normal or Cauchy
@@ -649,6 +655,7 @@ class PyBasilica():
         if self.stage == "random_noise":
             params["lambda_epsilon"] = self._get_param("lambda_epsilon", normalize=False, convert=convert, to_cpu=to_cpu)
 
+
         return params
 
 
@@ -755,7 +762,7 @@ class PyBasilica():
             alpha_prior_g = params["alpha_prior"][g]
 
             if self.dirichlet_prior:
-                alpha_prior_g = self._norm_and_clamp(alpha_prior_g) * self.hyperparameters["scale_factor"]
+                alpha_prior_g = self._norm_and_clamp(alpha_prior_g) * scale_factor_alpha
                 lprob_alpha = dist.Dirichlet(alpha_prior_g).log_prob(params["alpha"])
             else:
                 sigma = self.alpha_sigma_corr.clone().detach()
@@ -813,6 +820,7 @@ class PyBasilica():
     def _set_clusters(self, to_cpu=True):
         if self.cluster is None:
             self.groups = None
+
         else:
             self.params["pi"] = self._get_param("pi_param", normalize=False, to_cpu=to_cpu)
             self.groups, self.params["post_probs"] = self._compute_posterior_probs(to_cpu=to_cpu)
@@ -872,6 +880,7 @@ class PyBasilica():
         if self.cluster is not None: k += n_grps  # mixing proportions
 
         if self.stage == "random_noise":
+
             k += self.params["lambda_epsilon"].shape[0] * self.params["lambda_epsilon"].shape[1]  # random noise
 
         if self.cluster is not None:
@@ -894,6 +903,7 @@ class PyBasilica():
         if move and self.CUDA and torch.cuda.is_available() and isinstance(param, torch.Tensor):
             return param.cuda()
         return param
+    
 
 
     def convert_to_dataframe(self, x):
