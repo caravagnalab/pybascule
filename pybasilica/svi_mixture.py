@@ -33,7 +33,8 @@ class PyBasilica_mixture():
         cluster = 5,
         hyperparameters = {"pi_conc0":0.6, "alpha_p_conc0":0.6, "alpha_p_conc1":0.6,
                            "scale_factor_alpha":1000, "scale_factor_centroid":1000,
-                           "scale_tau":10},
+                           "scale_tau":0},
+
         compile_model = True,
         CUDA = False,
         store_parameters = False,
@@ -44,7 +45,7 @@ class PyBasilica_mixture():
         ):
 
         self._hyperpars_default = {"pi_conc0":0.6, "scale_factor_alpha":1000, "scale_factor_centroid":1000, 
-                                   "alpha_p_conc0":0.6, "alpha_p_conc1":0.6, "scale_tau":10}
+                                   "alpha_p_conc0":0.6, "alpha_p_conc1":0.6, "scale_tau":0}
         self._set_data_catalogue(alpha)
         self._set_fit_settings(lr=lr, optim_gamma=optim_gamma, n_steps=n_steps, \
                                compile_model=compile_model, CUDA=CUDA, store_parameters=store_parameters, 
@@ -111,8 +112,13 @@ class PyBasilica_mixture():
         scale_factor_alpha, scale_factor_centroid = self.hyperparameters["scale_factor_alpha"], self.hyperparameters["scale_factor_centroid"]
 
         tau = self.hyperparameters["scale_tau"]
-        scale_factor_centroid = torch.max(torch.tensor(1), torch.floor(torch.tensor((self._curr_step+1) / (self.n_steps / tau)))) * (scale_factor_centroid / tau)
-        scale_factor_alpha = torch.max(torch.tensor(1), torch.floor(torch.tensor((self._curr_step+1) / (self.n_steps / tau)))) * (scale_factor_alpha / tau)
+        if tau > 0:
+            scale_factor_centroid = torch.max(torch.tensor(1), torch.floor(torch.tensor((self._curr_step+1) / (self.n_steps / tau)))) * (scale_factor_centroid / tau)
+            scale_factor_alpha = torch.max(torch.tensor(1), torch.floor(torch.tensor((self._curr_step+1) / (self.n_steps / tau)))) * (scale_factor_alpha / tau)
+
+        else:
+            scale_factor_centroid = pyro.sample("scale_factor_centroid", dist.Normal(scale_factor_centroid, 50))
+            scale_factor_alpha = pyro.sample("scale_factor_alpha", dist.Normal(scale_factor_alpha, 50))
 
         if self.nonparam:
             with pyro.plate("beta_plate", cluster-1):
@@ -121,11 +127,9 @@ class PyBasilica_mixture():
         else:
             pi = pyro.sample("pi", dist.Dirichlet(torch.ones(cluster, dtype=torch.float64)))
 
-        scale_factor_centroid = pyro.sample("scale_factor_centroid", dist.Normal(scale_factor_centroid, 50))
         with pyro.plate("g", cluster):
             alpha_prior = pyro.sample("alpha_t", dist.Dirichlet(self.init_params["alpha_prior_param"] * scale_factor_centroid))
 
-        scale_factor_alpha = pyro.sample("scale_factor_alpha", dist.Normal(scale_factor_alpha, 50))
         with pyro.plate("n2", n_samples):
             z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":self.enumer})
 
@@ -139,6 +143,12 @@ class PyBasilica_mixture():
         scale_factor_alpha, scale_factor_centroid = self.hyperparameters["scale_factor_alpha"], self.hyperparameters["scale_factor_centroid"]
         tau = self.hyperparameters["scale_tau"]
 
+        if tau == 0:
+            scale_factor_centroid = pyro.param("scale_factor_centroid_param", torch.tensor(scale_factor_centroid), constraint=constraints.positive)
+            pyro.sample("scale_factor_centroid", dist.Delta(scale_factor_centroid))
+            scale_factor_alpha = pyro.param("scale_factor_alpha_param", torch.tensor(scale_factor_alpha), constraint=constraints.positive)
+            pyro.sample("scale_factor_alpha", dist.Delta(scale_factor_alpha))
+
         pi_param = pyro.param("pi_param", lambda: init_params["pi_param"], constraint=constraints.simplex)
         if self.nonparam:
             pi_conc0 = pyro.param("pi_conc0_param", lambda: dist.Uniform(0, 2).sample([cluster-1]), 
@@ -148,15 +158,9 @@ class PyBasilica_mixture():
         else:
             pyro.sample("pi", dist.Delta(pi_param).to_event(1))
 
-        scale_factor_centroid = pyro.param("scale_factor_centroid_param", torch.tensor(scale_factor_centroid / tau), constraint=constraints.positive)
-        pyro.sample("scale_factor_centroid", dist.Delta(scale_factor_centroid))
-
         alpha_prior_param = pyro.param("alpha_prior_param", lambda: init_params["alpha_prior_param"], constraint=constraints.simplex)
         with pyro.plate("g", cluster):
             pyro.sample("alpha_t", dist.Delta(alpha_prior_param).to_event(1))
-
-        scale_factor_alpha = pyro.param("scale_factor_alpha_param", torch.tensor(scale_factor_alpha / tau), constraint=constraints.positive)
-        pyro.sample("scale_factor_alpha", dist.Delta(scale_factor_alpha))
 
         with pyro.plate("n2", n_samples):
             pyro.sample("latent_class", dist.Categorical(pi_param), infer={"enumerate":self.enumer})

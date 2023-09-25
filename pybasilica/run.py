@@ -12,34 +12,63 @@ from sys import maxsize
 from pybasilica.svi import PyBasilica
 from pybasilica.svi_mixture import PyBasilica_mixture
 
-def single_run(seed_list, kwargs, kwargs_mixture):
+# def single_run(seed_list, kwargs, kwargs_mixture):
+#     minBic = maxsize
+#     bestRun = None
+#     runs_seed = dict()
+
+#     scores = dict()
+
+#     for seed in seed_list:
+#         obj = PyBasilica(seed=seed, **kwargs)
+#         obj._fit()
+
+#         if kwargs_mixture["cluster"] is not None:
+#             kwargs_mixture["alpha"] = obj.params["alpha"]
+#             obj_mixt = PyBasilica_mixture(seed=seed, **kwargs_mixture)
+#             obj_mixt._fit()
+
+#             obj.gradient_norms = {**obj.gradient_norms, **obj_mixt.gradient_norms}
+#             if kwargs["store_parameters"]:
+#                 obj.train_params = [{**obj.train_params[i], **obj_mixt.train_params[i]} for i in range(len(obj.train_params))]
+#             obj.losses_dmm = obj_mixt.losses
+#             obj.likelihoods_dmm = obj_mixt.likelihoods
+#             obj.regs_dmm = obj_mixt.regs
+#             obj.groups, obj.n_groups = obj_mixt.groups, obj_mixt.n_groups
+#             obj.params = {**obj.params, **obj_mixt.params}
+#             obj.init_params = {**obj.init_params, **obj_mixt.init_params}
+#             obj.hyperparameters = {**obj.hyperparameters, **obj_mixt.hyperparameters}
+
+#         scores["seed_"+str(seed)] = {"bic":obj.bic, "aic":obj.aic, "icl":obj.icl, "llik":obj.likelihood, "reg_llik":obj.reg_likelihood}
+
+#         if bestRun is None or obj.bic < minBic:
+#             minBic = obj.bic
+#             bestRun = obj
+
+#         runs_seed["seed_"+str(seed)] = obj
+
+#     bestRun.runs_scores = scores
+#     bestRun.runs_seed = runs_seed
+
+#     return bestRun
+
+
+def single_run_generic(seed_list, kwargs, mixture=False):
+    if mixture:
+        single_run(seed_list=seed_list, kwargs=kwargs, classname=PyBasilica_mixture)
+    else:
+        single_run(seed_list=seed_list, kwargs=kwargs, classname=PyBasilica)
+
+
+def single_run(seed_list, kwargs, classname):
     minBic = maxsize
     bestRun = None
     runs_seed = dict()
-
     scores = dict()
-
     for seed in seed_list:
-        obj = PyBasilica(seed=seed, **kwargs)
+        obj = classname(seed=seed, **kwargs)
         obj._fit()
-
-        if kwargs_mixture["cluster"] is not None:
-            kwargs_mixture["alpha"] = obj.params["alpha"]
-            obj_mixt = PyBasilica_mixture(seed=seed, **kwargs_mixture)
-            obj_mixt._fit()
-
-            obj.gradient_norms = {**obj.gradient_norms, **obj_mixt.gradient_norms}
-            if kwargs["store_parameters"]:
-                obj.train_params = [{**obj.train_params[i], **obj_mixt.train_params[i]} for i in range(len(obj.train_params))]
-            obj.losses_dmm = obj_mixt.losses
-            obj.likelihoods_dmm = obj_mixt.likelihoods
-            obj.regs_dmm = obj_mixt.regs
-            obj.groups, obj.n_groups = obj_mixt.groups, obj_mixt.n_groups
-            obj.params = {**obj.params, **obj_mixt.params}
-            obj.init_params = {**obj.init_params, **obj_mixt.init_params}
-
         scores["seed_"+str(seed)] = {"bic":obj.bic, "aic":obj.aic, "icl":obj.icl, "llik":obj.likelihood, "reg_llik":obj.reg_likelihood}
-
         if bestRun is None or obj.bic < minBic:
             minBic = obj.bic
             bestRun = obj
@@ -100,35 +129,67 @@ def fit(x, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1, n_steps = 500, e
     has_clusters = True
     if cluster is None: has_clusters, cluster = False, [1]
 
+    best_k, secondBest_k, scores_k, all_fits_stored = select_best(parlist=k_list, parname="k_denovo", seed=seed, 
+                                                                  kwargs=kwargs, classname=PyBasilica, save_all_fits=save_all_fits)
+    
+    if has_clusters:
+        kwargs_mixture["alpha"] = best_k.params["alpha"]
+        best_cl, _, scores_cl, all_fits_stored_cl = select_best(parlist=list(cluster), parname="cluster", seed=seed, 
+                                                                kwargs=kwargs_mixture, classname=PyBasilica_mixture, 
+                                                                save_all_fits=save_all_fits)
+        best_k = merge_k_cl(obj=best_k, obj_mixt=best_cl, store_parameters=store_parameters)
+        best_k.scores_CL, best_k.all_fits_CL = scores_cl, all_fits_stored_cl
+
+        if secondBest_k is not None:        
+            kwargs_mixture["alpha"] = secondBest_k.params["alpha"]
+            secondBest_cl, _, _, _ = select_best(parlist=list(cluster), parname="cluster", seed=seed, 
+                                        kwargs=kwargs_mixture, classname=PyBasilica_mixture, 
+                                        save_all_fits=save_all_fits)
+            secondBest_k = merge_k_cl(obj=secondBest_k, obj_mixt=secondBest_cl, store_parameters=store_parameters)
+
+    if best_k is not None: best_k.convert_to_dataframe(x)
+    if secondBest_k is not None: secondBest_k.convert_to_dataframe(x)
+
+    best_k.scores_K = scores_k
+    best_k.all_fits = all_fits_stored
+
+    return best_k, secondBest_k
+
+
+def select_best(parlist, parname, seed, kwargs, classname, save_all_fits):
     minBic = maxsize
     secondMinBic = maxsize
     bestRun, secondBest = None, None
 
     scores_k, all_fits_stored = dict(), dict()
-    for k in k_list:
-        kwargs["k_denovo"] = k
+    for k in parlist:
+        kwargs[parname] = k
 
-        for cl in list(cluster):
-            kwargs_mixture["cluster"] = cl if has_clusters else None
+        obj = single_run(seed_list=seed, kwargs=kwargs, classname=classname)
 
-            obj = single_run(seed_list=seed, kwargs=kwargs, kwargs_mixture=kwargs_mixture)
+        if obj.bic < minBic:
+            minBic, bestRun = obj.bic, obj
+        if minBic == secondMinBic or (obj.bic > minBic and obj.bic < secondMinBic):
+            secondMinBic, secondBest = obj.bic, obj
 
-            if obj.bic < minBic:
-                minBic, bestRun = obj.bic, obj
-            if minBic == secondMinBic or (obj.bic > minBic and obj.bic < secondMinBic):
-                secondMinBic, secondBest = obj.bic, obj
+        scores_k[parname+"_"+str(k)] = obj.runs_scores
+        if save_all_fits: all_fits_stored[parname+"_"+str(k)] = obj
 
-            scores_k["K_"+str(k)+".G_"+str(cl)] = obj.runs_scores
-            if save_all_fits: all_fits_stored["K_"+str(k)+".G_"+str(cl)] = obj
-
-    if bestRun is not None: bestRun.convert_to_dataframe(x)
-    if secondBest is not None: secondBest.convert_to_dataframe(x)
+    return bestRun, secondBest, scores_k, all_fits_stored
 
 
-    bestRun.scores_K = scores_k
-    bestRun.all_fits = all_fits_stored
-
-    return bestRun, secondBest
+def merge_k_cl(obj, obj_mixt, store_parameters):
+    obj.gradient_norms = {**obj.gradient_norms, **obj_mixt.gradient_norms}
+    if store_parameters:
+        obj.train_params = [{**obj.train_params[i], **obj_mixt.train_params[i]} for i in range(len(obj.train_params))]
+    obj.losses_dmm = obj_mixt.losses
+    obj.likelihoods_dmm = obj_mixt.likelihoods
+    obj.regs_dmm = obj_mixt.regs
+    obj.groups, obj.n_groups = obj_mixt.groups, obj_mixt.n_groups
+    obj.params = {**obj.params, **obj_mixt.params}
+    obj.init_params = {**obj.init_params, **obj_mixt.init_params}
+    obj.hyperparameters = {**obj.hyperparameters, **obj_mixt.hyperparameters}
+    return obj
 
 
 

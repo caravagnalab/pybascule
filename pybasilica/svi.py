@@ -935,6 +935,11 @@ class PyBasilica():
             elif parname == "post_probs" and isinstance(par, torch.Tensor):
                 self.params[parname] = pd.DataFrame(np.array(torch.transpose(par, dim0=1, dim1=0)), index=sample_names , columns=range(self.n_groups))
 
+        for k, v in self.hyperparameters.items():
+            if isinstance(v, torch.Tensor): 
+                if len(v.shape) == 0: self.hyperparameters[k] = int(v)
+                else: self.hyperparameters[k] = v.numpy()
+
         self._set_init_params(sample_names=sample_names, fixed_names=fixed_names, 
                               denovo_names=denovo_names, contexts=contexts)
 
