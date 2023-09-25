@@ -936,6 +936,8 @@ class PyBasilica():
                 self.params[parname] = pd.DataFrame(np.array(torch.transpose(par, dim0=1, dim1=0)), index=sample_names , columns=range(self.n_groups))
 
         for k, v in self.hyperparameters.items():
+            if v is None: continue
+            v = self._to_cpu(v, move=True)
             if isinstance(v, torch.Tensor): 
                 if len(v.shape) == 0: self.hyperparameters[k] = int(v)
                 else: self.hyperparameters[k] = v.numpy()
