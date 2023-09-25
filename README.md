@@ -1,2 +1,2 @@
-# pybasilica
-Detecting mutational signatures via bayesian inference and reference catalog
+# pyBasilica
+The model implements a Bayesian non-negative matrix factorization with simultaneous nonparametric patients clustering.
