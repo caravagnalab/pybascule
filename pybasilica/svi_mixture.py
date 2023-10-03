@@ -3,22 +3,16 @@ import pandas as pd
 import torch
 import pyro
 from pyro.infer import SVI,Trace_ELBO, JitTrace_ELBO, TraceEnum_ELBO
-from pyro.ops.indexing import Vindex
-from pyro.optim import Adam
 from sklearn.cluster import KMeans
 import pyro.distributions.constraints as constraints
 import pyro.distributions as dist
 import torch.nn.functional as F
 
-from tqdm import trange
-from logging import warning
 from collections import defaultdict
+from copy import deepcopy
 
 import numpy as np
 import pandas as pd
-import warnings
-from statsmodels.tsa.stattools import adfuller
-from statsmodels.tsa.stattools import kpss
 
 
 class PyBasilica_mixture():
@@ -43,6 +37,8 @@ class PyBasilica_mixture():
 
         nonparam = True,
         ):
+
+        ## if alpha is a tensor -> more than one variant type ??
 
         self._hyperpars_default = {"pi_conc0":0.6, "scale_factor_alpha":1000, "scale_factor_centroid":1000, 
                                    "alpha_p_conc0":0.6, "alpha_p_conc1":0.6, "scale_tau":0}
@@ -86,15 +82,31 @@ class PyBasilica_mixture():
                 self.hyperparameters[parname] = hyperparameters.get(parname, self._hyperpars_default[parname])
 
 
-    def _set_data_catalogue(self, alpha):
-        if isinstance(alpha, pd.DataFrame):
-            alpha = torch.tensor(alpha.values, dtype=torch.float64)
-        if not isinstance(alpha, torch.Tensor):
-            alpha = torch.tensor(alpha, dtype=torch.float64)
+    def _pad_tensor(self, param):
+        max_shape = max([i.shape[1] for i in param])
+        for i in range(len(param)):
+            if param[i].shape[1] < max_shape:
+                pad_dims = max_shape - param[i].shape[1]
+                param[i] = F.pad(input=param[i], pad=(0, pad_dims, 0,0), mode="constant", value=torch.finfo().tiny)
+        return param
 
-        self.alpha = alpha
-        self.n_samples = alpha.shape[0]
-        self.K = alpha.shape[1]
+
+    def _set_data_catalogue(self, alpha):
+        if not isinstance(alpha, list):
+            alpha = [alpha]
+
+        self.alpha = deepcopy(alpha)
+        for i in range(len(self.alpha)):
+            if isinstance(self.alpha[i], pd.DataFrame):
+                self.alpha[i] = torch.tensor(self.alpha[i].values, dtype=torch.float64)
+            if not isinstance(self.alpha[i], torch.Tensor):
+                self.alpha[i] = torch.tensor(self.alpha[i], dtype=torch.float64)
+
+        self.alpha = torch.stack(self._pad_tensor(self.alpha))  # tensor of tensors
+
+        self.n_samples = self.alpha.shape[-2]
+        self.K = self.alpha.shape[-1]
+        self.n_variants = self.alpha.shape[0]
         self.alpha = self._norm_and_clamp(self.alpha)
 
 
@@ -107,7 +119,7 @@ class PyBasilica_mixture():
 
 
     def model_mixture(self):
-        cluster, n_samples = self.cluster, self.n_samples
+        cluster, n_samples, n_variants = self.cluster, self.n_samples, self.n_variants
         pi_conc0 = self.hyperparameters["pi_conc0"]
         scale_factor_alpha, scale_factor_centroid = self.hyperparameters["scale_factor_alpha"], self.hyperparameters["scale_factor_centroid"]
 
@@ -128,16 +140,17 @@ class PyBasilica_mixture():
             pi = pyro.sample("pi", dist.Dirichlet(torch.ones(cluster, dtype=torch.float64)))
 
         with pyro.plate("g", cluster):
-            alpha_prior = pyro.sample("alpha_t", dist.Dirichlet(self.init_params["alpha_prior_param"] * scale_factor_centroid))
+            with pyro.plate("n_vars1", n_variants):
+                alpha_prior = pyro.sample("alpha_t", dist.Dirichlet(self.init_params["alpha_prior_param"] * scale_factor_centroid))
 
         with pyro.plate("n2", n_samples):
             z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":self.enumer})
-
-            pyro.sample("obs", dist.Dirichlet(alpha_prior[z] * scale_factor_alpha), obs=self.alpha)
+            with pyro.plate("n_vars2", n_variants):
+                x = pyro.sample("obs", dist.Dirichlet(alpha_prior[:,z,:] * scale_factor_alpha), obs=self.alpha)
 
 
     def guide_mixture(self):
-        cluster, n_samples = self.cluster, self.n_samples
+        cluster, n_samples, n_variants = self.cluster, self.n_samples, self.n_variants
         init_params = self._initialize_params()
 
         scale_factor_alpha, scale_factor_centroid = self.hyperparameters["scale_factor_alpha"], self.hyperparameters["scale_factor_centroid"]
@@ -160,7 +173,8 @@ class PyBasilica_mixture():
 
         alpha_prior_param = pyro.param("alpha_prior_param", lambda: init_params["alpha_prior_param"], constraint=constraints.simplex)
         with pyro.plate("g", cluster):
-            pyro.sample("alpha_t", dist.Delta(alpha_prior_param).to_event(1))
+            with pyro.plate("n_vars1", n_variants):
+                pyro.sample("alpha_t", dist.Delta(alpha_prior_param).to_event(1))
 
         with pyro.plate("n2", n_samples):
             pyro.sample("latent_class", dist.Categorical(pi_param), infer={"enumerate":self.enumer})
@@ -220,13 +234,22 @@ class PyBasilica_mixture():
     def _initialize_params_clustering(self):
         pi = alpha_prior = None
 
-        km = self._initialize_weights(X=self.alpha.clone(), G=self.cluster)  # run the Kmeans
+        alpha_km = torch.cat(tuple(self.alpha.clone()), dim=1)
+
+        km = self._initialize_weights(X=alpha_km, G=self.cluster)  # run the Kmeans
         pi_km = torch.tensor([(np.where(km.labels_ == k)[0].shape[0]) / self.n_samples for k in range(km.n_clusters)])
         groups_kmeans = torch.tensor(km.labels_)
         alpha_prior_km = self._norm_and_clamp(torch.tensor(km.cluster_centers_))
+        alpha_prior_km[alpha_prior_km < torch.finfo().tiny] = torch.finfo().tiny
+
+        last, alpha_prior = 0, list()
+        for i in range(self.n_variants):
+            alpha_prior.append(alpha_prior_km[:,last : last + self.K])
+            last = last + self.K - 1
+        
 
         pi = self._to_gpu(pi_km, move=True)
-        alpha_prior = self._to_gpu(alpha_prior_km, move=True)
+        alpha_prior = self._to_gpu(torch.stack(alpha_prior), move=True)
 
         params = dict()
         params["pi_param"] = torch.tensor(pi, dtype=torch.float64)
@@ -335,9 +358,11 @@ class PyBasilica_mixture():
 
         llik = torch.zeros(self.cluster, self.n_samples)
         for g in range(self.cluster):
-            alpha_prior_g = alpha_centroid[g]
+            lprob_alpha = 0
+            for v in range(self.n_variants):
+                alpha_prior_g = alpha_centroid[v,g]
 
-            lprob_alpha = dist.Dirichlet(alpha_prior_g * scale_factor_alpha).log_prob(alpha)
+                lprob_alpha += dist.Dirichlet(alpha_prior_g * scale_factor_alpha).log_prob(alpha[v])
 
             llik[g, :] = torch.log(pi[g]) + lprob_alpha
 
@@ -433,31 +458,67 @@ class PyBasilica_mixture():
         return k
 
 
-    # def convert_to_dataframe(self, alpha):
-    #     self.alpha = alpha
-    #     sample_names = list(alpha.index)
-    #     signatures = list(alpha.columns)
-
-    #     if isinstance(self.pi, torch.Tensor): 
-    #         self.pi = self.pi.tolist()
-    #     if isinstance(self.post_probs, torch.Tensor): 
-    #         self.post_probs = pd.DataFrame(np.array(torch.transpose(self._to_cpu(self.post_probs, move=True), dim0=1, dim1=0)), index=sample_names , columns=range(self.cluster))
-    #     if isinstance(self.alpha_prior, torch.Tensor):
-    #         self.alpha_prior = pd.DataFrame(np.array(self.alpha_prior), index=range(self.n_groups), columns=signatures)
-
-    #     self._set_init_params()
+    def _concat_tensors(self, param, dim=1):
+        if isinstance(param, torch.Tensor):
+            return torch.cat(tuple(param), dim=dim)
+        return np.concatenate(tuple(param), axis=dim)
 
 
-    # def _set_init_params(self):
-    #     # return
-    #     for k, v_tmp in self.init_params.items():
-    #         v = self._to_cpu(v_tmp, move=True)
-    #         if v is None: continue
+    def _pad_dataframes(self, param):
+        new_param = []
+        max_shape = max([i.shape[1] for i in param])
+        for i in range(len(param)):
+            if param[i].shape[1] < max_shape:
+                pad_dims = max_shape - param[i].shape[1]
+                columns = list(str(i)+"_"+param[i].columns) + [str(i)+"_P"+str(j) for j in range(pad_dims)]
+                index = param[i].index
+                values = F.pad(input=torch.tensor(param[i].values), pad=(0, pad_dims, 0,0), mode="constant", value=torch.finfo().tiny)
+                new_param.append(pd.DataFrame(values.numpy(), index=index, columns=columns))
+            else: 
+                new_param.append(param[i].copy(deep=True))
+                new_param[i].columns = list(str(i)+"_"+param[i].columns)
+        return new_param
 
-    #         if k == "alpha_prior_param":
-    #             self.init_params[k] = pd.DataFrame(np.array(v), index=range(self.n_groups), columns=self.alpha.columns)
-    #         else:
-    #             self.init_params[k] = np.array(v)
+
+    def convert_to_dataframe(self, alpha):
+        # mutations catalogue
+        if not isinstance(alpha, list): alpha = [alpha]
+
+        self.alpha = pd.concat(self._pad_dataframes(alpha), axis=1)
+        sample_names, sigs = list(self.alpha.index), list(self.alpha.columns)
+
+        if self.groups is not None: self.groups = np.array(self.groups)
+
+        for parname, par in self.params.items():
+            if par is None: continue
+            par = self._to_cpu(par, move=True)
+            if parname == "pi": 
+                self.params[parname] = par.tolist() if isinstance(par, torch.Tensor) else par
+            elif (parname == "alpha_prior" or parname == "alpha_prior_unn"): 
+                self.params[parname] = pd.DataFrame(np.array(self._concat_tensors(par, dim=1)), index=range(self.n_groups), columns=sigs)
+            elif parname == "post_probs" and isinstance(par, torch.Tensor):
+                self.params[parname] = pd.DataFrame(np.array(torch.transpose(par, dim0=1, dim1=0)), index=sample_names , columns=range(self.n_groups))
+
+        for k, v in self.hyperparameters.items():
+            if v is None: continue
+            v = self._to_cpu(v, move=True)
+            if isinstance(v, torch.Tensor): 
+                if len(v.shape) == 0: self.hyperparameters[k] = int(v)
+                else: self.hyperparameters[k] = v.numpy()
+
+        self._set_init_params(sigs)
+
+
+    def _set_init_params(self, sigs):
+        # return
+        for k, v_tmp in self.init_params.items():
+            v = self._to_cpu(v_tmp, move=True)
+            if v is None: continue
+
+            if k == "alpha_prior_param":
+                self.init_params[k] = pd.DataFrame(np.array(self._concat_tensors(v, dim=1)), index=range(self.n_groups), columns=sigs)
+            else:
+                self.init_params[k] = np.array(v)
 
 
     def _to_cpu(self, param, move=True):
