@@ -119,6 +119,8 @@ class PyBasilica_mixture():
 
 
     def model_mixture(self):
+        alpha = torch.permute(self.alpha.clone(), dims=(1,0,2))
+        print(alpha.shape)
         cluster, n_samples, n_variants = self.cluster, self.n_samples, self.n_variants
         pi_conc0 = self.hyperparameters["pi_conc0"]
         scale_factor_alpha, scale_factor_centroid = self.hyperparameters["scale_factor_alpha"], self.hyperparameters["scale_factor_centroid"]
@@ -145,8 +147,9 @@ class PyBasilica_mixture():
 
         with pyro.plate("n2", n_samples):
             z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":self.enumer})
-            with pyro.plate("n_vars2", n_variants):
-                x = pyro.sample("obs", dist.Dirichlet(alpha_prior[:,z,:] * scale_factor_alpha), obs=self.alpha)
+            x = pyro.sample("obs", dist.Dirichlet(alpha_prior[:,z,:] * scale_factor_alpha), obs=alpha)
+            # with pyro.plate("n_vars2", n_variants):
+            #     x = pyro.sample("obs", dist.Dirichlet(alpha_prior[:,z,:] * scale_factor_alpha), obs=self.alpha)
 
 
     def guide_mixture(self):
@@ -246,7 +249,6 @@ class PyBasilica_mixture():
         for i in range(self.n_variants):
             alpha_prior.append(alpha_prior_km[:,last : last + self.K])
             last = last + self.K - 1
-        
 
         pi = self._to_gpu(pi_km, move=True)
         alpha_prior = self._to_gpu(torch.stack(alpha_prior), move=True)
@@ -303,7 +305,7 @@ class PyBasilica_mixture():
             loss = svi.step()
             self.losses.append(loss)
 
-            self.likelihoods.append(self._likelihood_mixture(to_cpu=False).sum())
+            # self.likelihoods.append(self._likelihood_mixture(to_cpu=False).sum())
 
             if self.store_parameters and i%50==0: 
                 self.train_params.append(self.get_param_dict(convert=True, to_cpu=False))
@@ -312,6 +314,7 @@ class PyBasilica_mixture():
 
         self.gradient_norms = dict(gradient_norms) if gradient_norms is not None else {}
         self.params = {**self._set_clusters(to_cpu=True), **self.get_param_dict(convert=True, to_cpu=True)}
+        self.init_params = self._get_init_param_dict(convert=True, to_cpu=True)
         self.bic = self.aic = self.icl = self.reg_likelihood = None
         self.likelihood = self._likelihood_mixture(to_cpu=True).sum().item()
         self.set_scores()
@@ -324,6 +327,17 @@ class PyBasilica_mixture():
         params["scale_factor_alpha"] = self._get_param("scale_factor_alpha_param", convert=convert, to_cpu=to_cpu)
         params["scale_factor_centroid"] = self._get_param("scale_factor_centroid_param", convert=convert, to_cpu=to_cpu)
         params["pi_conc0"] = self._get_param("pi_conc0_param", convert=convert, to_cpu=to_cpu)
+        return params
+
+
+    def _get_init_param_dict(self, convert=True, to_cpu=True):
+        params = dict()
+        for k, v in self.init_params.items():
+            if not convert: params[k] = v
+            else:
+                params[k] = self._to_cpu(v, move=to_cpu)
+                if len(v.shape) > 2: params[k] = self._concat_tensors(params[k], dim=1)
+                params[k] = np.array(params[k])
         return params
 
 
@@ -342,6 +356,7 @@ class PyBasilica_mixture():
 
             if par is not None and convert:
                 par = self._to_cpu(par, move=True)
+                if len(par.shape) > 2: par = self._concat_tensors(par, dim=1)
                 par = np.array(par)
 
             return par
@@ -459,6 +474,7 @@ class PyBasilica_mixture():
 
 
     def _concat_tensors(self, param, dim=1):
+        if len(param.shape) <= 2: return param
         if isinstance(param, torch.Tensor):
             return torch.cat(tuple(param), dim=dim)
         return np.concatenate(tuple(param), axis=dim)
