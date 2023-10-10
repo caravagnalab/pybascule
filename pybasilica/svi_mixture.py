@@ -147,9 +147,9 @@ class PyBasilica_mixture():
 
         with pyro.plate("n2", n_samples):
             z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":self.enumer})
-            x = pyro.sample("obs", dist.Dirichlet(alpha_prior[:,z,:] * scale_factor_alpha), obs=alpha)
-            # with pyro.plate("n_vars2", n_variants):
-            #     x = pyro.sample("obs", dist.Dirichlet(alpha_prior[:,z,:] * scale_factor_alpha), obs=self.alpha)
+            # x = pyro.sample("obs", dist.Dirichlet(alpha_prior[:,z,:] * scale_factor_alpha), obs=alpha)
+            with pyro.plate("n_vars2", n_variants):
+                x = pyro.sample("obs", dist.Dirichlet(alpha_prior[:,z,:] * scale_factor_alpha), obs=self.alpha)
 
 
     def guide_mixture(self):
