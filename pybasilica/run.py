@@ -13,15 +13,15 @@ from pybasilica.svi import PyBasilica
 from pybasilica.svi_mixture import PyBasilica_mixture
 
 
-def single_run_generic(seed_list, kwargs, mixture=False):
-    if mixture:
-        single_run(seed_list=seed_list, kwargs=kwargs, classname=PyBasilica_mixture)
-    else:
-        single_run(seed_list=seed_list, kwargs=kwargs, classname=PyBasilica)
+# def single_run_generic(seed_list, kwargs, mixture=False):
+#     if mixture:
+#         single_run(seed_list=seed_list, kwargs=kwargs, classname=PyBasilica_mixture)
+#     else:
+#         single_run(seed_list=seed_list, kwargs=kwargs, classname=PyBasilica)
 
 
-def single_run(seed_list, kwargs, classname):
-    minBic = maxsize
+def single_run(seed_list, kwargs, classname, score):
+    minScore = maxsize
     bestRun = None
     runs_seed = dict()
     scores = dict()
@@ -29,8 +29,12 @@ def single_run(seed_list, kwargs, classname):
         obj = classname(seed=seed, **kwargs)
         obj._fit()
         scores["seed:"+str(seed)] = {"bic":obj.bic, "aic":obj.aic, "icl":obj.icl, "llik":obj.likelihood, "reg_llik":obj.reg_likelihood}
-        if bestRun is None or obj.bic < minBic:
-            minBic = obj.bic
+
+        if score == "bic": score_k = obj.bic
+        elif score == "icl": score_k = obj.icl
+        
+        if bestRun is None or score_k < minScore:
+            minScore = score_k
             bestRun = obj
 
         runs_seed["seed:"+str(seed)] = obj
@@ -94,14 +98,15 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
     if x is None: best_k, secondBest_k, scores_k, all_fits_stored = None, None, None, None
     if x is not None:
         best_k, secondBest_k, scores_k, all_fits_stored = select_best(parlist=k_list, parname="k_denovo", seed=seed, 
-                                                                      kwargs=kwargs, classname=PyBasilica, save_all_fits=save_all_fits)
+                                                                      kwargs=kwargs, classname=PyBasilica, score="bic",
+                                                                      save_all_fits=save_all_fits)
         if alpha is None: alpha = best_k.params["alpha"]
 
     if has_clusters:
         kwargs_mixture["alpha"] = alpha
         best_cl, _, scores_cl, all_fits_stored_cl = select_best(parlist=list(cluster), parname="cluster", seed=seed, 
                                                                 kwargs=kwargs_mixture, classname=PyBasilica_mixture, 
-                                                                save_all_fits=save_all_fits)
+                                                                score="icl", save_all_fits=save_all_fits)
         
         best_k = merge_k_cl(obj=best_k, obj_mixt=best_cl, store_parameters=store_parameters) if best_k is not None else best_cl
         best_k.scores_CL, best_k.all_fits_CL = scores_cl, all_fits_stored_cl
@@ -110,7 +115,7 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
             kwargs_mixture["alpha"] = secondBest_k.params["alpha"]
             secondBest_cl, _, _, _ = select_best(parlist=list(cluster), parname="cluster", seed=seed, 
                                         kwargs=kwargs_mixture, classname=PyBasilica_mixture, 
-                                        save_all_fits=save_all_fits)
+                                        score="icl", save_all_fits=save_all_fits)
             secondBest_k = merge_k_cl(obj=secondBest_k, obj_mixt=secondBest_cl, store_parameters=store_parameters)
 
     if best_k is not None: best_k.convert_to_dataframe(x) if x is not None else best_k.convert_to_dataframe(alpha)
@@ -122,21 +127,24 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
     return best_k, secondBest_k
 
 
-def select_best(parlist, parname, seed, kwargs, classname, save_all_fits):
-    minBic = maxsize
-    secondMinBic = maxsize
+def select_best(parlist, parname, seed, kwargs, classname, save_all_fits, score):
+    minScore = maxsize
+    secondMinScore = maxsize
     bestRun, secondBest = None, None
 
     scores_k, all_fits_stored = dict(), dict()
     for k in parlist:
         kwargs[parname] = k
 
-        obj = single_run(seed_list=seed, kwargs=kwargs, classname=classname)
+        obj = single_run(seed_list=seed, kwargs=kwargs, classname=classname, score=score)
 
-        if obj.bic < minBic:
-            minBic, bestRun = obj.bic, obj
-        if minBic == secondMinBic or (obj.bic > minBic and obj.bic < secondMinBic):
-            secondMinBic, secondBest = obj.bic, obj
+        if score == "bic": score_k = obj.bic
+        elif score == "icl": score_k = obj.icl
+
+        if score_k < minScore:
+            minScore, bestRun = score_k, obj
+        if minScore == secondMinScore or (score_k > minScore and score_k < secondMinScore):
+            secondMinScore, secondBest = score_k, obj
 
         scores_k[parname+":"+str(k)] = obj.runs_scores
         if save_all_fits: all_fits_stored[parname+":"+str(k)] = obj

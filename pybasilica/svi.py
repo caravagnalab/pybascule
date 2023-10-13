@@ -34,7 +34,7 @@ class PyBasilica():
         cluster = None,
         hyperparameters = {"alpha_sigma":0.1, "alpha_p_sigma":1., "alpha_p_conc0":0.6, "alpha_p_conc1":0.6, "alpha_rate":5, "alpha_conc":1.,
                            "beta_d_sigma":1, "eps_sigma":10, "pi_conc0":0.6, "scale_factor_centroid":1000, "scale_factor_alpha":1000},
-        dirichlet_prior = False,
+        dirichlet_prior = True,
         beta_fixed = None,
         compile_model = True,
         CUDA = False,
@@ -235,18 +235,12 @@ class PyBasilica():
 
                 with pyro.plate("g", cluster):
                     alpha_prior = pyro.sample("alpha_t", dist.Dirichlet(self.init_params["alpha_prior_param"] * scale_factor_centroid))
-                # with pyro.plate("k1", self.K):
-                #     with pyro.plate("g", cluster):  # G x K matrix
-                #         alpha_prior = pyro.sample("alpha_t", dist.Beta(alpha_conc1, alpha_conc0))
-                # alpha_prior = self._norm_and_clamp(alpha_prior)
             else:
                 with pyro.plate("k1", self.K):
                     with pyro.plate("g", cluster):  # G x K matrix
                         alpha_prior = pyro.sample("alpha_t", dist.HalfNormal(torch.tensor(alpha_p_sigma, dtype=torch.float64)))
                 alpha_prior = self._norm_and_clamp(alpha_prior) 
 
-            # if self.dirichlet_prior: 
-            #     alpha_prior = alpha_prior * scale_factor_alpha  # Dirichlet
             if not self.dirichlet_prior: # Normal or Cauchy
                 q05 = alpha_prior - alpha_sigma
                 q95 = alpha_prior + alpha_sigma
@@ -260,7 +254,6 @@ class PyBasilica():
             if not self._noise_only:
                 if self.enforce_sparsity:
                     with pyro.plate("n", self.n_samples):
-                        # alpha = pyro.sample("latent_exposure", dist.Dirichlet(torch.ones(self.K, dtype=torch.float64)))
                         alpha = pyro.sample("latent_exposure", dist.Dirichlet(self.hyperparameters["alpha_conc"]))
 
                 else:
@@ -351,10 +344,6 @@ class PyBasilica():
                     alpha_prior_param = pyro.param("alpha_prior_param", lambda: init_params["alpha_prior_param"], constraint=constraints.simplex)
                     with pyro.plate("g", cluster):
                         pyro.sample("alpha_t", dist.Delta(alpha_prior_param).to_event(1))
-                    # alpha_prior_param = pyro.param("alpha_prior_param", lambda: init_params["alpha_prior_param"], constraint=constraints.greater_than_eq(torch.finfo().tiny))
-                    # with pyro.plate("k1", self.K):
-                    #     with pyro.plate("g", self.cluster):
-                    #         pyro.sample("alpha_t", dist.Delta(alpha_prior_param))
                 else:
                     alpha_prior_param = pyro.param("alpha_prior_param", lambda: init_params["alpha_prior_param"], constraint=constraints.greater_than_eq(0.))
                     with pyro.plate("k1", self.K):
@@ -528,7 +517,6 @@ class PyBasilica():
             ones_tmp = torch.ones(self.n_samples, self.K, dtype=torch.float64)
 
         if self.enforce_sparsity:
-            # alpha = dist.Beta(ones_tmp * alpha_p_conc1, ones_tmp * alpha_p_conc0).sample()
             alpha = dist.Dirichlet(torch.ones(self.K, dtype=torch.float64)).sample((self.n_samples,))
         else:
             alpha = dist.HalfNormal(ones_tmp * alpha_sigma).sample()

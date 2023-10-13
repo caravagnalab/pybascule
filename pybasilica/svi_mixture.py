@@ -35,7 +35,7 @@ class PyBasilica_mixture():
 
         seed = 10,
 
-        nonparam = True,
+        nonparam = True
         ):
 
         ## if alpha is a tensor -> more than one variant type ??
@@ -119,8 +119,8 @@ class PyBasilica_mixture():
 
 
     def model_mixture(self):
-        alpha = torch.permute(self.alpha.clone(), dims=(1,0,2))
-        print(alpha.shape)
+        # alpha = torch.permute(self.alpha.clone(), dims=(1,0,2))
+        alpha = self.alpha
         cluster, n_samples, n_variants = self.cluster, self.n_samples, self.n_variants
         pi_conc0 = self.hyperparameters["pi_conc0"]
         scale_factor_alpha, scale_factor_centroid = self.hyperparameters["scale_factor_alpha"], self.hyperparameters["scale_factor_centroid"]
@@ -223,11 +223,22 @@ class PyBasilica_mixture():
         return removed_idx, unq
 
 
+    # def _initialize_kmeans(self, X, K, seed):
+    #     '''
+    #     Function to find the optimal seed for the initial KMeans, checking the inertia.
+    #     '''
+
+    #     km = self.run_kmeans(X, K, seed=seed)
+    #     return np.round(km.inertia_, 3), seed
+
+
     def _initialize_weights(self, X, G):
         '''
         Function to run KMeans on the counts.
         Returns the vector of mixing proportions and the clustering assignments.
         '''
+        # _, init_seed = min([self._initialize_kmeans(G, seed) for seed in range(100)], key=lambda x: x[0])
+
         km = self.run_kmeans(X=X, G=G, seed=15)
         self._init_km = km
 
@@ -245,9 +256,15 @@ class PyBasilica_mixture():
         alpha_prior_km = self._norm_and_clamp(torch.tensor(km.cluster_centers_))
         alpha_prior_km[alpha_prior_km < torch.finfo().tiny] = torch.finfo().tiny
 
+        pi_km = dist.Dirichlet(pi_km * 30).sample()
+
         last, alpha_prior = 0, list()
         for i in range(self.n_variants):
-            alpha_prior.append(alpha_prior_km[:,last : last + self.K])
+            alpha_p_tmp = dist.Dirichlet(alpha_prior_km[:,last : last + self.K] * 30).sample()
+            alpha_p_tmp[alpha_p_tmp < torch.finfo().tiny] = torch.finfo().tiny
+            alpha_p_tmp = self._norm_and_clamp(alpha_p_tmp)
+
+            alpha_prior.append(alpha_p_tmp)
             last = last + self.K - 1
 
         pi = self._to_gpu(pi_km, move=True)
@@ -375,7 +392,7 @@ class PyBasilica_mixture():
         for g in range(self.cluster):
             lprob_alpha = 0
             for v in range(self.n_variants):
-                alpha_prior_g = alpha_centroid[v,g]
+                alpha_prior_g = alpha_centroid[v, g]
 
                 lprob_alpha += dist.Dirichlet(alpha_prior_g * scale_factor_alpha).log_prob(alpha[v])
 
