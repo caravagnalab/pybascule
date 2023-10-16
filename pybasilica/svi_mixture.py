@@ -307,7 +307,7 @@ class PyBasilica_mixture():
 
         self._curr_step = 0
         svi = SVI(self.model_mixture, self.guide_mixture, optimizer, loss=elbo)
-        loss = svi.step()
+        loss = float(svi.step())
 
         gradient_norms = defaultdict(list)
         for name, value in pyro.get_param_store().named_parameters():
@@ -319,7 +319,7 @@ class PyBasilica_mixture():
         self.train_params = list()
         for i in range(self.n_steps):   # inference - do gradient steps
             self._curr_step = i
-            loss = svi.step()
+            loss = float(svi.step())
             self.losses.append(loss)
 
             # self.likelihoods.append(self._likelihood_mixture(to_cpu=False).sum())

@@ -671,7 +671,7 @@ class PyBasilica():
         self._initialize_params()
 
         svi = SVI(self.model, self.guide, optimizer, loss=elbo)
-        loss = svi.step()
+        loss = float(svi.step())
 
         gradient_norms = defaultdict(list)
         for name, value in pyro.get_param_store().named_parameters():
@@ -682,7 +682,7 @@ class PyBasilica():
         self.likelihoods = list()
         self.train_params = list()
         for i in range(self.n_steps):   # inference - do gradient steps
-            loss = svi.step()
+            loss = float(svi.step())
             self.losses.append(loss)
             self.regs.append(self.reg)
 

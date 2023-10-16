@@ -8,49 +8,18 @@ from rich.progress import Progress, BarColumn, TextColumn, TaskProgressColumn, T
 from rich.live import Live
 from rich.table import Table
 from sys import maxsize
+from copy import deepcopy
 
 from pybasilica.svi import PyBasilica
 from pybasilica.svi_mixture import PyBasilica_mixture
 
 
-# def single_run_generic(seed_list, kwargs, mixture=False):
-#     if mixture:
-#         single_run(seed_list=seed_list, kwargs=kwargs, classname=PyBasilica_mixture)
-#     else:
-#         single_run(seed_list=seed_list, kwargs=kwargs, classname=PyBasilica)
-
-
-def single_run(seed_list, kwargs, classname, score):
-    minScore = maxsize
-    bestRun = None
-    runs_seed = dict()
-    scores = dict()
-    for seed in seed_list:
-        obj = classname(seed=seed, **kwargs)
-        obj._fit()
-        scores["seed:"+str(seed)] = {"bic":obj.bic, "aic":obj.aic, "icl":obj.icl, "llik":obj.likelihood, "reg_llik":obj.reg_likelihood}
-
-        if score == "bic": score_k = obj.bic
-        elif score == "icl": score_k = obj.icl
-        
-        if bestRun is None or score_k < minScore:
-            minScore = score_k
-            bestRun = obj
-
-        runs_seed["seed:"+str(seed)] = obj
-
-    bestRun.runs_scores = scores
-    bestRun.runs_seed = runs_seed
-
-    return bestRun
-
-
 def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1, n_steps = 500, enumer = "parallel", cluster = None, beta_fixed = None, 
         hyperparameters = None, dirichlet_prior = True, compile_model = False, CUDA = False, enforce_sparsity = True, nonparametric = False, 
         regularizer = "cosine", reg_weight = 0., regul_compare = None, regul_denovo = True, regul_fixed = True, stage = "", 
-        seed = 10, store_parameters = False, save_all_fits=False):
+        seed_list = [10], store_parameters = False, store_fits=False):
 
-    if isinstance(seed, int): seed = [seed]
+    if isinstance(seed_list, int): seed_list = [seed_list]
     if isinstance(cluster, int) and cluster < 1: cluster = None
     elif isinstance(cluster, int): cluster = [cluster]
     if isinstance(k_list, int): k_list = [k_list]
@@ -92,68 +61,101 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
     }
 
     if nonparametric and isinstance(cluster, list): cluster = [max(cluster)]
-    has_clusters = True
-    if cluster is None: has_clusters, cluster = False, [1]
 
-    if x is None: best_k, secondBest_k, scores_k, all_fits_stored = None, None, None, None
+    bestK, scoresK, fitsK, fits_alpha = None, None, dict(), dict()
     if x is not None:
-        best_k, secondBest_k, scores_k, all_fits_stored = select_best(parlist=k_list, parname="k_denovo", seed=seed, 
-                                                                      kwargs=kwargs, classname=PyBasilica, score="bic",
-                                                                      save_all_fits=save_all_fits)
-        if alpha is None: alpha = best_k.params["alpha"]
+        bestK, scoresK, fitsK = run_fit(seed_list=seed_list, kwargs=kwargs, parname="k_denovo",
+                                        parlist=k_list, score_name="bic", store_fits=store_fits, cls=PyBasilica)
+        bestK.scores = scoresK
+        bestK.fits = fitsK
 
-    if has_clusters:
+    if cluster is not None:
+        if bestK is not None: alpha = bestK.params["alpha"]
+
         kwargs_mixture["alpha"] = alpha
-        best_cl, _, scores_cl, all_fits_stored_cl = select_best(parlist=list(cluster), parname="cluster", seed=seed, 
-                                                                kwargs=kwargs_mixture, classname=PyBasilica_mixture, 
-                                                                score="icl", save_all_fits=save_all_fits)
-        
-        best_k = merge_k_cl(obj=best_k, obj_mixt=best_cl, store_parameters=store_parameters) if best_k is not None else best_cl
-        best_k.scores_CL, best_k.all_fits_CL = scores_cl, all_fits_stored_cl
+        bestCL, scoresCL, fitsCL = run_fit(seed_list=seed_list, kwargs=kwargs_mixture, parname="cluster",
+                                           parlist=list(cluster), score_name="icl", store_fits=store_fits,
+                                           cls=PyBasilica_mixture)
+        bestCL.scores = scoresCL
+        bestCL.fits = fitsCL
 
-        if secondBest_k is not None:
-            kwargs_mixture["alpha"] = secondBest_k.params["alpha"]
-            secondBest_cl, _, _, _ = select_best(parlist=list(cluster), parname="cluster", seed=seed, 
-                                        kwargs=kwargs_mixture, classname=PyBasilica_mixture, 
-                                        score="icl", save_all_fits=save_all_fits)
-            secondBest_k = merge_k_cl(obj=secondBest_k, obj_mixt=secondBest_cl, store_parameters=store_parameters)
+        bestK = merge_k_cl(obj=bestK, obj_mixt=bestCL, store_parameters=store_parameters) if bestK is not None else bestCL
 
-    if best_k is not None: best_k.convert_to_dataframe(x) if x is not None else best_k.convert_to_dataframe(alpha)
-    if secondBest_k is not None: secondBest_k.convert_to_dataframe(x) if x is not None else secondBest_k.convert_to_dataframe(alpha)
+        # if len(fitsK) > 0: fits_alpha = {idd_k : v.params["alpha"] for idd_k, v in fitsK.items()}
+        # if len(fits_alpha) > 0:
+        #     fitsCL, scoresCL = dict(), dict()
+        #     for idd_k, alpha_k in fitsK.items():
+        #         kwargs_mixture["alpha"] = alpha_k
+        #         bestCL_i, scoresCL_i, fitsCL_i = run_fit(seed_list=seed_list, kwargs=kwargs_mixture, parname="cluster",
+        #                                                  parlist=list(cluster), score_name="icl", store_fits=store_fits,
+        #                                                  cls=PyBasilica_mixture)
 
-    best_k.scores_K = scores_k
-    best_k.all_fits = all_fits_stored
+        #         best_i = merge_k_cl(obj=fitsK[idd_k], obj_mixt=bestCL_i, store_parameters=store_parameters) # if best_k is not None else best_cl
 
-    return best_k, secondBest_k
+    if bestK is not None: bestK.convert_to_dataframe(x) if x is not None else bestK.convert_to_dataframe(alpha)
+
+    return bestK
 
 
-def select_best(parlist, parname, seed, kwargs, classname, save_all_fits, score):
-    minScore = maxsize
-    secondMinScore = maxsize
-    bestRun, secondBest = None, None
+def single_run(seed_list, kwargs, cls, score_name, idd):
+    best_score, best_run = maxsize, None
+    fits, scores = dict(), dict()
 
-    scores_k, all_fits_stored = dict(), dict()
-    for k in parlist:
-        kwargs[parname] = k
+    for seed in seed_list:
+        idd_s = "seed:"+str(seed)
+        obj = cls(seed=seed, **kwargs)
+        obj._fit()
+        obj.idd = idd + "." + idd_s
 
-        obj = single_run(seed_list=seed, kwargs=kwargs, classname=classname, score=score)
+        sc_s = obj.__dict__[score_name]
 
-        if score == "bic": score_k = obj.bic
-        elif score == "icl": score_k = obj.icl
+        if best_run is None or sc_s < best_score:
+            best_score = sc_s
+            best_run = deepcopy(obj)
 
-        if score_k < minScore:
-            minScore, bestRun = score_k, obj
-        if minScore == secondMinScore or (score_k > minScore and score_k < secondMinScore):
-            secondMinScore, secondBest = score_k, obj
+        scores[idd_s] = {"bic":obj.bic, "aic":obj.aic, "icl":obj.icl, "llik":obj.likelihood, "reg_llik":obj.reg_likelihood}
+        fits[idd_s] = obj
 
-        scores_k[parname+":"+str(k)] = obj.runs_scores
-        if save_all_fits: all_fits_stored[parname+":"+str(k)] = obj
+    return best_run, scores, fits
 
-    return bestRun, secondBest, scores_k, all_fits_stored
+
+def run_fit(seed_list, kwargs, parname, parlist, score_name, store_fits, cls):
+    '''
+    `seed_list` -> list of seeds to test \\
+    `kwargs` -> dict of arguments for the fit \\
+    `parname` -> name of the parameter in the for loop \\
+    `parlist` -> list of values to iterate through \\
+    `score_name` -> name of the score to minimize (either `bic`, `icl` or `aic`) \\
+    `store_fits` -> if True, all fits will be stores \\
+    `cls` -> class to be used for the fit \\
+    '''
+    best_score, best_run = maxsize, None
+    fits, scores = dict(), dict()
+    for i in parlist:
+        idd_i = parname + ":" + str(i)
+
+        # fits_i contains a dict with the fits for all seeds in seed_list
+        kwargs[parname] = i
+        best_i, scores_i, fits_i = single_run(seed_list=seed_list, kwargs=kwargs, cls=cls, score_name=score_name, idd=idd_i)
+
+        sc_i = best_i.__dict__[score_name]
+
+        if best_run is None or sc_i < best_score:
+            best_score = sc_i
+            best_run = deepcopy(best_i)
+            best_idd = idd_i
+
+        scores[idd_i] = scores_i
+        if store_fits: fits[idd_i] = fits_i
+
+    return best_run, scores, fits
 
 
 def merge_k_cl(obj, obj_mixt, store_parameters):
-    print(obj_mixt.params["alpha_prior"].shape)
+    obj.__dict__["fits"] = {"NMF":obj.fits, "CL":obj_mixt.fits}
+    obj.__dict__["scores"] = {"NMF":obj.scores, "CL":obj_mixt.scores}
+    obj.__dict__["idd"] = obj.idd + ";" + obj_mixt.idd
+
     obj.gradient_norms = {**obj.gradient_norms, **obj_mixt.gradient_norms}
     if store_parameters:
         obj.train_params = [{**obj.train_params[i], **obj_mixt.train_params[i]} for i in range(len(obj.train_params))]
@@ -165,6 +167,35 @@ def merge_k_cl(obj, obj_mixt, store_parameters):
     obj.init_params = {**obj.init_params, **obj_mixt.init_params}
     obj.hyperparameters = {**obj.hyperparameters, **obj_mixt.hyperparameters}
     return obj
+
+
+# def select_best(parlist, parname, seed, kwargs, classname, save_all_fits, score):
+#     bestScore, secondScore = maxsize, maxsize
+#     best_idd, secondBest = None, None
+
+#     scores_k, all_fits = dict(), dict()
+#     for k in parlist:
+#         idd = parname + ":" + str(k)
+#         kwargs[parname] = k
+
+#         obj, fits_scores, fits_seed = single_run(seed_list=seed, kwargs=kwargs, classname=classname, score=score)
+
+#         if score == "bic": score_k = obj.bic
+#         elif score == "icl": score_k = obj.icl
+
+#         if score_k < bestScore:
+#             bestScore, best_idd = score_k, 
+#         if bestScore == secondScore or (score_k > bestScore and score_k < secondScore):
+#             secondScore, secondBest = score_k, deepcopy(obj)
+
+#         bestRun.fits_seed = fits_seed
+#         bestRun.idd = idd
+#         scores_k[idd] = fits_scores
+#         if save_all_fits: 
+#             obj.fits_seed = fits_seed
+#             all_fits[idd] = obj
+
+#     return bestRun, secondBest, scores_k, all_fits
 
 
 
