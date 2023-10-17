@@ -1,18 +1,17 @@
-import numpy as np
-import pandas as pd
 import torch
 import pyro
-from pyro.infer import SVI,Trace_ELBO, JitTrace_ELBO, TraceEnum_ELBO
-from sklearn.cluster import KMeans
 import pyro.distributions.constraints as constraints
 import pyro.distributions as dist
 import torch.nn.functional as F
+import numpy as np
+import pandas as pd
 
+from pyro.infer import SVI,Trace_ELBO, JitTrace_ELBO, TraceEnum_ELBO
+from sklearn.cluster import KMeans
+from sklearn.metrics import calinski_harabasz_score
 from collections import defaultdict
 from copy import deepcopy
 
-import numpy as np
-import pandas as pd
 
 
 class PyBasilica_mixture():
@@ -49,7 +48,7 @@ class PyBasilica_mixture():
 
         self._set_hyperparams(enumer=enumer, cluster=cluster, hyperparameters=hyperparameters)
 
-        self._init_seed = None
+        self._init_seed = 15
 
 
     def _set_fit_settings(self, lr, optim_gamma, n_steps, compile_model, CUDA, \
@@ -134,6 +133,14 @@ class PyBasilica_mixture():
             scale_factor_centroid = pyro.sample("scale_factor_centroid", dist.Normal(scale_factor_centroid, 50))
             scale_factor_alpha = pyro.sample("scale_factor_alpha", dist.Normal(scale_factor_alpha, 50))
 
+        '''
+        pi_beta = tensor([0.3724, 0.5093, 0.1001, 0.5359, 0.8083])
+        beta = tensor([0.3724, 0.5093, 0.1001, 0.5359, 0.8083])
+        beta1m_cumprod = tensor([0.6276, 0.3080, 0.2771, 0.1286, 0.0247])
+        res1 = tensor([0.3724, 0.5093, 0.1001, 0.5359, 0.8083, 1.0000])
+        res2 = tensor([1.0000, 0.6276, 0.3080, 0.2771, 0.1286, 0.0247])
+        tensor([0.3724, 0.3197, 0.0308, 0.1485, 0.1040, 0.0247])
+        '''
         if self.nonparam:
             with pyro.plate("beta_plate", cluster-1):
                 pi_beta = pyro.sample("beta", dist.Beta(1, pi_conc0))
@@ -147,9 +154,8 @@ class PyBasilica_mixture():
 
         with pyro.plate("n2", n_samples):
             z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":self.enumer})
-            # x = pyro.sample("obs", dist.Dirichlet(alpha_prior[:,z,:] * scale_factor_alpha), obs=alpha)
             with pyro.plate("n_vars2", n_variants):
-                x = pyro.sample("obs", dist.Dirichlet(alpha_prior[:,z,:] * scale_factor_alpha), obs=self.alpha)
+                pyro.sample("obs", dist.Dirichlet(alpha_prior[:,z,:] * scale_factor_alpha), obs=self.alpha)
 
 
     def guide_mixture(self):
@@ -167,7 +173,8 @@ class PyBasilica_mixture():
 
         pi_param = pyro.param("pi_param", lambda: init_params["pi_param"], constraint=constraints.simplex)
         if self.nonparam:
-            pi_conc0 = pyro.param("pi_conc0_param", lambda: dist.Uniform(0, 2).sample([cluster-1]), 
+            # pi_conc0 = pyro.param("pi_conc0_param", lambda: dist.Uniform(0, 2).sample([cluster-1]), 
+            pi_conc0 = pyro.param("pi_conc0_param", lambda: dist.Gamma(0.01, 0.01).sample([cluster-1]), 
                                   constraint=constraints.greater_than_eq(torch.finfo().tiny))
             with pyro.plate("beta_plate", cluster-1):
                 pyro.sample("beta", dist.Beta(torch.ones(cluster-1, dtype=torch.float64), pi_conc0))
@@ -181,6 +188,26 @@ class PyBasilica_mixture():
 
         with pyro.plate("n2", n_samples):
             pyro.sample("latent_class", dist.Categorical(pi_param), infer={"enumerate":self.enumer})
+
+
+    def _find_best_G(self, X, g_interval, seed, index_fn=calinski_harabasz_score):
+        g_min = min(max(g_interval[0], 2), X.unique(dim=0).shape[0]-1)
+        g_max = min(g_min, X.unique(dim=0).shape[0]-1)
+
+        if g_min > g_max: g_max = g_min + 1
+        if g_min == g_max: return g_min
+
+        k_interval = (g_min, g_max)
+
+        scores = torch.zeros(k_interval[1])
+        for g in range(k_interval[0], k_interval[1]):
+            km = self.run_kmeans(X=X, G=g, seed=seed)
+            labels = km.labels_
+            real_g = len(np.unique(labels))
+            scores[real_g] = max(scores[real_g], index_fn(X, labels))
+
+        best_k = scores.argmax()  # best k is the one maximing the calinski score
+        return best_k
 
 
     def run_kmeans(self, X, G, seed):
@@ -223,26 +250,19 @@ class PyBasilica_mixture():
         return removed_idx, unq
 
 
-    # def _initialize_kmeans(self, X, K, seed):
-    #     '''
-    #     Function to find the optimal seed for the initial KMeans, checking the inertia.
-    #     '''
-
-    #     km = self.run_kmeans(X, K, seed=seed)
-    #     return np.round(km.inertia_, 3), seed
-
-
-    def _initialize_weights(self, X, G):
+    def kmeans_optim(self, X, G):
         '''
         Function to run KMeans on the counts.
         Returns the vector of mixing proportions and the clustering assignments.
         '''
         # _, init_seed = min([self._initialize_kmeans(G, seed) for seed in range(100)], key=lambda x: x[0])
 
-        km = self.run_kmeans(X=X, G=G, seed=15)
+        best_G = self._find_best_G(X=X, g_interval=[_ for _ in range(G-5, G+1)], seed=self._init_seed)
+
+        km = self.run_kmeans(X=X, G=best_G, seed=self._init_seed)
         self._init_km = km
 
-        return km
+        return km, best_G
 
 
     def _initialize_params_clustering(self):
@@ -250,10 +270,15 @@ class PyBasilica_mixture():
 
         alpha_km = torch.cat(tuple(self.alpha.clone()), dim=1)
 
-        km = self._initialize_weights(X=alpha_km, G=self.cluster)  # run the Kmeans
-        pi_km = torch.tensor([(np.where(km.labels_ == k)[0].shape[0]) / self.n_samples for k in range(km.n_clusters)])
-        groups_kmeans = torch.tensor(km.labels_)
-        alpha_prior_km = self._norm_and_clamp(torch.tensor(km.cluster_centers_))
+        pi_km = torch.ones((self.cluster,)) * 10e-3
+        alpha_prior_km = torch.ones((self.cluster, self.K * self.n_variants)) * 10e-3
+
+        km, best_G = self.kmeans_optim(X=alpha_km, G=self.cluster)  # run the Kmeans
+
+        ## setup mixing proportion vector
+        pi_km[:best_G] = torch.tensor([(np.where(km.labels_ == g)[0].shape[0]) / self.n_samples for g in range(km.n_clusters)])
+
+        alpha_prior_km[:best_G,:] = self._norm_and_clamp(torch.tensor(km.cluster_centers_))
         alpha_prior_km[alpha_prior_km < torch.finfo().tiny] = torch.finfo().tiny
 
         pi_km = dist.Dirichlet(pi_km * 30).sample()
@@ -273,7 +298,7 @@ class PyBasilica_mixture():
         params = dict()
         params["pi_param"] = torch.tensor(pi, dtype=torch.float64)
         params["alpha_prior_param"] = torch.tensor(alpha_prior, dtype=torch.float64)
-        params["init_clusters"] = groups_kmeans
+        params["init_clusters"] = torch.tensor(km.labels_)
         return params
     
 
