@@ -296,8 +296,8 @@ class PyBasilica_mixture():
         alpha_prior = self._to_gpu(torch.stack(alpha_prior), move=True)
 
         params = dict()
-        params["pi_param"] = torch.tensor(pi, dtype=torch.float64)
-        params["alpha_prior_param"] = torch.tensor(alpha_prior, dtype=torch.float64)
+        params["pi_param"] = pi.clone().detach().double()
+        params["alpha_prior_param"] = alpha_prior.clone().detach().double()
         params["init_clusters"] = torch.tensor(km.labels_)
         return params
     

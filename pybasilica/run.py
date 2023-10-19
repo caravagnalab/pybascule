@@ -28,7 +28,7 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
 
     kwargs = {
         "x":x,
-        "cluster":None,
+        # "cluster":None,
         "lr":lr,
         "optim_gamma":optim_gamma,
         "n_steps":n_steps,
@@ -38,14 +38,14 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
         "hyperparameters":hyperparameters,
         "compile_model":compile_model,
         "CUDA":CUDA,
-        "enforce_sparsity":enforce_sparsity,
-        "regularizer":regularizer,
-        "reg_weight":reg_weight,
+        # "enforce_sparsity":enforce_sparsity,
+        # "regularizer":regularizer,
+        # "reg_weight":reg_weight,
         "store_parameters":store_parameters,
         "stage":stage,
-        "regul_compare":regul_compare,
-        "regul_denovo":regul_denovo,
-        "regul_fixed":regul_fixed
+        # "regul_compare":regul_compare,
+        # "regul_denovo":regul_denovo,
+        # "regul_fixed":regul_fixed
         }
 
     kwargs_mixture = {
@@ -81,17 +81,6 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
 
         bestK = merge_k_cl(obj=bestK, obj_mixt=bestCL, store_parameters=store_parameters) if bestK is not None else bestCL
 
-        # if len(fitsK) > 0: fits_alpha = {idd_k : v.params["alpha"] for idd_k, v in fitsK.items()}
-        # if len(fits_alpha) > 0:
-        #     fitsCL, scoresCL = dict(), dict()
-        #     for idd_k, alpha_k in fitsK.items():
-        #         kwargs_mixture["alpha"] = alpha_k
-        #         bestCL_i, scoresCL_i, fitsCL_i = run_fit(seed_list=seed_list, kwargs=kwargs_mixture, parname="cluster",
-        #                                                  parlist=list(cluster), score_name="icl", store_fits=store_fits,
-        #                                                  cls=PyBasilica_mixture)
-
-        #         best_i = merge_k_cl(obj=fitsK[idd_k], obj_mixt=bestCL_i, store_parameters=store_parameters) # if best_k is not None else best_cl
-
     if bestK is not None: bestK.convert_to_dataframe(x) if x is not None else bestK.convert_to_dataframe(alpha)
 
     return bestK
@@ -113,7 +102,7 @@ def single_run(seed_list, kwargs, cls, score_name, idd):
             best_score = sc_s
             best_run = deepcopy(obj)
 
-        scores[idd_s] = {"bic":obj.bic, "aic":obj.aic, "icl":obj.icl, "llik":obj.likelihood, "reg_llik":obj.reg_likelihood}
+        scores[idd_s] = {"bic":obj.bic, "aic":obj.aic, "icl":obj.icl, "llik":obj.likelihood}
         fits[idd_s] = obj
 
     return best_run, scores, fits
