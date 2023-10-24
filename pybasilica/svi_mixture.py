@@ -190,9 +190,15 @@ class PyBasilica_mixture():
             pyro.sample("latent_class", dist.Categorical(pi_param), infer={"enumerate":self.enumer})
 
 
+    def _check_kmeans(self, X):
+        if X.unique(dim=0).shape[0] < 2:
+            return False
+        return True
+
+
     def _find_best_G(self, X, g_interval, seed, index_fn=calinski_harabasz_score):
-        g_min = min(max(g_interval[0], 2), X.unique(dim=0).shape[0]-1)
-        g_max = min(g_min, X.unique(dim=0).shape[0]-1)
+        g_min = min(max(g_interval[0], 2), X.unique(dim=0).shape[0])
+        g_max = min(g_min, X.unique(dim=0).shape[0])
 
         if g_min > g_max: g_max = g_min + 1
         if g_min == g_max: return g_min
@@ -255,9 +261,9 @@ class PyBasilica_mixture():
         Function to run KMeans on the counts.
         Returns the vector of mixing proportions and the clustering assignments.
         '''
-        # _, init_seed = min([self._initialize_kmeans(G, seed) for seed in range(100)], key=lambda x: x[0])
-
         best_G = self._find_best_G(X=X, g_interval=[_ for _ in range(G-5, G+1)], seed=self._init_seed)
+
+        if best_G < 2: return
 
         km = self.run_kmeans(X=X, G=best_G, seed=self._init_seed)
         self._init_km = km
@@ -300,11 +306,22 @@ class PyBasilica_mixture():
         params["alpha_prior_param"] = alpha_prior.clone().detach().double()
         params["init_clusters"] = torch.tensor(km.labels_)
         return params
-    
+
+
+    def _initialize_params_random(self):
+        pi = dist.Dirichlet(torch.ones(self.cluster, dtype=torch.float64)).sample()
+        alpha_prior = dist.Dirichlet(torch.ones(self.n_variants, self.cluster, self.K, dtype=torch.float64)).sample()
+
+        params = {"pi_param":pi, "alpha_prior_param":alpha_prior}
+        return params
+
 
     def _initialize_params(self):
         if self.init_params is None:
-            self.init_params = self._initialize_params_clustering()
+            if self._check_kmeans(torch.cat(tuple(self.alpha.clone()), dim=1)):
+                self.init_params = self._initialize_params_clustering()
+            else:
+                self.init_params = self._initialize_params_random()
         return self.init_params
 
 
