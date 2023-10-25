@@ -204,8 +204,6 @@ class PyBasilica():
             with pyro.plate("k_denovo", self.k_denovo):  # rows
                 beta_denovo = pyro.sample("latent_signatures", dist.Dirichlet(centroid))
 
-            print(torch.nn.functional.cosine_similarity(beta_denovo, beta_fixed_cum))
-
             beta = self._get_unique_beta_stick_breaking(beta_fixed=self.beta_fixed, 
                                                         beta_denovo=beta_denovo, 
                                                         beta_weights=pi)
@@ -287,7 +285,7 @@ class PyBasilica():
             beta_dn = dist.HalfNormal(torch.ones(self.k_denovo, self.contexts, dtype=torch.float64) * beta_d_sigma).sample()
             beta_dn = self._norm_and_clamp(beta_dn)
             # beta_weights = dist.Beta(1., torch.ones(self.k_fixed, dtype=torch.float64) * pi_conc0).to_event(1).sample((self.k_denovo,))
-            beta_weights = dist.Beta(1., torch.ones(self.k_fixed + 1, dtype=torch.float64) * pi_conc0).to_event(1).sample((self.k_denovo,))
+            beta_weights = self._norm_and_clamp(dist.Beta(1., torch.ones(self.k_fixed + 1, dtype=torch.float64) * pi_conc0).to_event(1).sample((self.k_denovo,)))
 
         params = self._create_init_params_dict(pi=pi, alpha_prior=alpha_prior, alpha=alpha, 
                                                epsilon=epsilon, beta_dn=beta_dn, beta_weights=beta_weights)
@@ -325,7 +323,7 @@ class PyBasilica():
         return torch.cat((beta_fixed, beta_denovo), axis=0)
 
 
-    def _get_unique_beta_stick_breaking(self, beta_fixed, beta_denovo, beta_weights):
+    def _get_unique_beta_stick_breaking(self, beta_fixed, beta_denovo, beta_weights, convert=False):
         beta = torch.zeros(self.k_denovo, self.contexts, dtype=torch.float64) 
 
         for j in range(self.k_denovo):
@@ -335,10 +333,11 @@ class PyBasilica():
             if beta_denovo is not None:
                 beta[j] += beta_denovo[j]
 
-        return beta
+        if not convert: return beta
+        return np.array(beta)
 
 
-    def _get_alpha_stick_breaking(self, alpha_star, beta_weights):
+    def _get_alpha_stick_breaking(self, alpha_star, beta_weights, convert=False):
         alpha = torch.zeros((self.n_samples, self.K))
 
         for n in range(self.n_samples):
@@ -348,8 +347,9 @@ class PyBasilica():
                 
                 for d in range(self.k_fixed, self.K):
                     alpha[n, d] += torch.sum(alpha_star[n,j]) * beta_weights[j,-1]
-
-        return self._norm_and_clamp(alpha)
+        
+        if not convert: return self._norm_and_clamp(alpha)
+        return np.array(self._norm_and_clamp(alpha))
 
 
     def _get_param(self, param_name, normalize=False, to_cpu=True, convert=False):
@@ -379,18 +379,18 @@ class PyBasilica():
         params["alpha"] = self._get_param("alpha", normalize=True, convert=convert, to_cpu=to_cpu)
         params["beta_d"] =  self._get_param("beta_denovo", normalize=True, convert=convert, to_cpu=to_cpu)
         params["beta_f"] = self._get_param("beta_fixed", convert=convert, to_cpu=to_cpu)
-        params["beta_w"] = self._get_param("beta_weights", convert=False, to_cpu=to_cpu, normalize=False)
+        params["beta_w"] = self._get_param("beta_weights", convert=convert, to_cpu=to_cpu, normalize=False)
         # if params["beta_w"] is not None: params["beta_w"] = self._mix_weights(params["beta_w"].clone().detach())
         params["pi_conc0"] = self._get_param("pi_conc0", normalize=False, convert=convert, to_cpu=to_cpu)
 
         if convert and self.k_denovo > 0:
             params["alpha_star"] = params["alpha"]
             params["alpha"] = self._get_alpha_stick_breaking(alpha_star=torch.tensor(params["alpha_star"]), 
-                                                             beta_weights=params["beta_w"])
+                                                             beta_weights=params["beta_w"], convert=convert)
             params["beta_star"] = self._get_unique_beta_stick_breaking(self.beta_fixed, 
                                                                        self._get_param("beta_denovo", normalize=True, convert=False, to_cpu=to_cpu),
-                                                                    #    self._get_param("beta_weights", convert=convert, to_cpu=to_cpu))
-                                                                       params["beta_w"])
+                                                                       self._get_param("beta_weights", convert=False, to_cpu=to_cpu, normalize=False), 
+                                                                       convert=convert)
 
         if self.stage == "random_noise":
             params["lambda_epsilon"] = self._get_param("lambda_epsilon", normalize=False, convert=convert, to_cpu=to_cpu)
@@ -551,7 +551,6 @@ class PyBasilica():
 
         if self.K_alpha == self.k_denovo: alpha_columns = denovo_names
         else: alpha_columns = fixed_names + denovo_names
-        # alpha_columns = fixed_names + denovo_names
 
         if self.beta_fixed is not None and isinstance(self.beta_fixed, torch.Tensor) and torch.sum(self.beta_fixed) > 0:
             self.beta_fixed = pd.DataFrame(self.beta_fixed, index=fixed_names, columns=contexts)
@@ -561,16 +560,20 @@ class PyBasilica():
             par = self._to_cpu(par, move=True)
             if parname == "alpha": 
                 self.params[parname] = pd.DataFrame(np.array(par), index=sample_names, columns=fixed_names+denovo_names)
-            elif parname == "beta_d": 
+            elif parname == "beta_d" or parname == "beta_star": 
                 self.params[parname] = pd.DataFrame(np.array(par), index=denovo_names, columns=contexts)
             elif parname == "beta_f": 
                 self.params[parname] = self.beta_fixed
+            elif parname == "beta_w":
+                self.params[parname] = pd.DataFrame(np.array(par), index=denovo_names, columns=fixed_names+["DN"])
             elif parname == "pi": 
                 self.params[parname] = par.tolist() if isinstance(par, torch.Tensor) else par
             elif parname == "lambda_epsilon":
                 self.params[parname] = pd.DataFrame(np.array(par), index=sample_names, columns=contexts)
             elif (parname == "alpha_prior" or parname == "alpha_prior_unn"): 
                 self.params[parname] = pd.DataFrame(np.array(par), index=range(self.n_groups), columns=fixed_names+denovo_names)
+            elif parname == "alpha_star": 
+                self.params[parname] = pd.DataFrame(np.array(par), index=sample_names, columns=denovo_names)
             elif parname == "post_probs" and isinstance(par, torch.Tensor):
                 self.params[parname] = pd.DataFrame(np.array(torch.transpose(par, dim0=1, dim1=0)), index=sample_names , columns=range(self.n_groups))
 
@@ -598,6 +601,8 @@ class PyBasilica():
                 self.init_params[k] = pd.DataFrame(np.array(v), index=denovo_names, columns=contexts)
             elif k == "alpha_prior_param":
                 self.init_params[k] = pd.DataFrame(np.array(v), index=range(self.n_groups), columns=fixed_names+denovo_names)
+            elif k == "beta_weights":
+                self.init_params[k] = pd.DataFrame(np.array(v), index=denovo_names, columns=fixed_names+["DN"])
             elif k == "epsilon_var":
                 self.init_params[k] = pd.DataFrame(np.array(v), index=sample_names, columns=contexts)
             else:
