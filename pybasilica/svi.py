@@ -185,20 +185,23 @@ class PyBasilica():
             ## matrix k_denovo x k_fixed
             with pyro.plate("beta_d_plate", k_denovo):
                 pi_beta = pyro.sample("beta_w", dist.Beta(torch.ones(k_fixed, dtype=torch.float64), pi_conc0).to_event(1))
-                pi = self._mix_weights(pi_beta)
-                pyro.sample("beta_w_dn", dist.Delta(pi).to_event(1))
+                beta_weight = pyro.sample("beta_w_dn", dist.Delta(self._mix_weights(pi_beta)).to_event(1))
 
             # with pyro.plate("beta_d_plate", k_denovo):
             #     pi = pyro.sample("beta_w", dist.Dirichlet(torch.ones(k_fixed+1, dtype=torch.float64)))
 
-            beta_fixed_cum = self._get_unique_beta_stick_breaking(beta_fixed=self.beta_fixed, 
-                                                                  beta_denovo=None, 
-                                                                  beta_weights=pi)
-            beta_fixed_cum = self._norm_and_clamp(beta_fixed_cum)
+            # cum_weights = torch.ones((self.k_denovo, self.k_fixed))/self.k_fixed
+            # beta_fixed_cum = self._get_unique_beta_stick_breaking(beta_fixed=self.beta_fixed, 
+            #                                                       beta_denovo=None, 
+            #                                                       beta_weights=cum_weights)
+            # beta_fixed_cum = self._norm_and_clamp(beta_fixed_cum)
 
-            centroid = torch.ones((self.k_denovo, self.contexts))
-            centroid[beta_fixed_cum > 0.1] = torch.finfo().tiny
-            centroid = self._norm_and_clamp(centroid) * 100
+            beta_fixed_cum = torch.sum(self.beta_fixed, dim=0)
+            centroid = (1 - torch.sum(self.beta_fixed, dim=0)) * 100
+            print(centroid)
+            # centroid = torch.ones((self.k_denovo, self.contexts)) * 100
+            # centroid[beta_fixed_cum > 0.01] = torch.finfo().tiny
+            # centroid = self._norm_and_clamp(centroid) * 100
             # centroid = (torch.ones((self.k_denovo, self.contexts)) - beta_fixed_cum) * 100
             
             with pyro.plate("k_denovo", self.k_denovo):  # rows
@@ -206,7 +209,8 @@ class PyBasilica():
 
             beta = self._get_unique_beta_stick_breaking(beta_fixed=self.beta_fixed, 
                                                         beta_denovo=beta_denovo, 
-                                                        beta_weights=pi)
+                                                        beta_weights=beta_weight)
+
         else: 
             beta = self._get_unique_beta(beta_fixed=self.beta_fixed,
                                          beta_denovo=beta_denovo)
@@ -219,7 +223,8 @@ class PyBasilica():
 
         # print(beta_fixed_cum * (1 - torch.abs(beta_fixed_cum - beta_denovo)))
         if self.k_denovo > 0:
-            pyro.factor("penalty", torch.sum(beta_fixed_cum * (1 - torch.abs(beta_fixed_cum - beta_denovo))))
+            # pyro.factor("penalty", self.n_samples * self.contexts * torch.sum(beta_fixed_cum * (torch.abs(beta_fixed_cum - beta_denovo))))
+            pyro.factor("penalty", 1 / (1e-9 + dist.Dirichlet(beta_fixed_cum*500).to_event(1).log_prob(beta_denovo)))
 
 
     def guide(self):
@@ -257,10 +262,13 @@ class PyBasilica():
             # with pyro.plate("beta_d_plate", k_denovo):
             #     pyro.sample("beta_w", dist.Delta(pi_beta_w).to_event(1))
 
+            kappa = pyro.param('kappa', lambda: dist.Uniform(0, 2).sample([self.k_fixed]), constraint=constraints.positive)
             pi_beta_w = pyro.param("beta_weights", lambda: init_params["beta_weights"],
                                    constraint=constraints.simplex)
+
             with pyro.plate("beta_d_plate", k_denovo):
-                pyro.sample("beta_w", dist.Beta(torch.ones(self.k_fixed, dtype=torch.float64), self.hyperparameters["pi_conc0"]).to_event(1))
+                pyro.sample("beta_w", dist.Beta(torch.ones(self.k_fixed, dtype=torch.float64), kappa).to_event(1))
+                # pyro.sample("beta_w", dist.Beta(torch.ones(self.k_fixed, dtype=torch.float64), self.hyperparameters["pi_conc0"]).to_event(1))
                 pyro.sample("beta_w_dn", dist.Delta(pi_beta_w).to_event(1))
 
 
@@ -282,10 +290,27 @@ class PyBasilica():
             epsilon = dist.HalfNormal(torch.ones(self.n_samples, self.contexts, dtype=torch.float64) * eps_sigma).sample()
 
         if self.k_denovo > 0:
-            beta_dn = dist.HalfNormal(torch.ones(self.k_denovo, self.contexts, dtype=torch.float64) * beta_d_sigma).sample()
-            beta_dn = self._norm_and_clamp(beta_dn)
+            # cum_weights = torch.ones((self.k_denovo, self.k_fixed))/self.k_fixed
+            # beta_fixed_cum = self._get_unique_beta_stick_breaking(beta_fixed=self.beta_fixed, 
+            #                                                       beta_denovo=None, 
+            #                                                       beta_weights=cum_weights)
+            # beta_fixed_cum = self._norm_and_clamp(beta_fixed_cum)
+            # centroid = (1-beta_fixed_cum) * 100
+
+            cum_weights = torch.ones((self.k_denovo, self.k_fixed))/self.k_fixed
+            beta_fixed_cum = self._get_unique_beta_stick_breaking(beta_fixed=self.beta_fixed, 
+                                                                  beta_denovo=None, 
+                                                                  beta_weights=cum_weights)
+            centroid = torch.ones((self.k_denovo, self.contexts)) * 100
+            centroid[beta_fixed_cum > 0.01] = torch.finfo().tiny
+
+            beta_dn = dist.Dirichlet(centroid).sample()
+            # beta_dn = dist.HalfNormal(torch.ones(self.k_denovo, self.contexts, dtype=torch.float64) * beta_d_sigma).sample()
+            # beta_dn = self._norm_and_clamp(beta_dn)
             # beta_weights = dist.Beta(1., torch.ones(self.k_fixed, dtype=torch.float64) * pi_conc0).to_event(1).sample((self.k_denovo,))
-            beta_weights = self._norm_and_clamp(dist.Beta(1., torch.ones(self.k_fixed + 1, dtype=torch.float64) * pi_conc0).to_event(1).sample((self.k_denovo,)))
+            # beta_weights = dist.Beta(1., torch.ones(self.k_fixed + 1, dtype=torch.float64) * pi_conc0).sample((self.k_denovo,))
+            # beta_weights = self._norm_and_clamp(beta_weights)
+            beta_weights = dist.Dirichlet(torch.cat((torch.ones(self.k_fixed) * 10, torch.ones(1)))).sample((self.k_denovo,))
 
         params = self._create_init_params_dict(pi=pi, alpha_prior=alpha_prior, alpha=alpha, 
                                                epsilon=epsilon, beta_dn=beta_dn, beta_weights=beta_weights)
@@ -420,9 +445,12 @@ class PyBasilica():
 
         self._initialize_params()
 
+        self.reg = list()
+
         svi = SVI(self.model, self.guide, optimizer, loss=elbo)
         loss = float(svi.step())
-
+        
+        # train_params_each = int(self.n_steps / 100)
         gradient_norms = defaultdict(list)
         for name, value in pyro.get_param_store().named_parameters():
             value.register_hook(lambda g, name=name: gradient_norms[name].append(g.norm().item()))
@@ -437,7 +465,7 @@ class PyBasilica():
 
             self.likelihoods.append(self._likelihood(to_cpu=False))
 
-            if self.store_parameters and i%50==0: 
+            if self.store_parameters: # and i%train_params_each==0: 
                 self.train_params.append(self.get_param_dict(convert=True, all=False))
 
         if set_attributes is False: return
