@@ -486,9 +486,16 @@ class PyBasilica():
         self._set_aic()
         self.icl = None
 
+    
+    def compute_regularization(self, beta_denovo):
+        if not isinstance(beta_denovo, torch.Tensor): beta_denovo = torch.tensor(beta_denovo)
+        _, beta_fixed_cum = self._get_beta_centroid(beta_denovo=None, eps=1e-15, power=0.1)
+        return 1 / (1e-9 + dist.Dirichlet(beta_fixed_cum*500).to_event(1).log_prob(beta_denovo))
+
 
     def _set_bic(self):
-        _log_like = self.likelihood
+        _log_like = self.likelihood 
+        if self.k_denovo>0: _log_like += self.compute_regularization(self._get_param("beta_denovo"))
 
         k = self._number_of_params() 
         n = self.n_samples
@@ -499,6 +506,7 @@ class PyBasilica():
 
     def _set_aic(self):
         _log_like = self.likelihood
+        if self.k_denovo>0: _log_like += self.compute_regularization(self._get_param("beta_denovo"))
 
         k = self._number_of_params() 
         aic = 2*k - 2*_log_like
