@@ -183,7 +183,7 @@ class PyBasilica():
             with pyro.plate("beta_d_plate", k_denovo):
                 beta_weight = pyro.sample("beta_w_dn", dist.Dirichlet(centr**0.1))
 
-            centroid, beta_fixed_cum = self._get_beta_centroid(beta_denovo=None, eps=1e-15, power=0.1)
+            centroid = self._get_beta_centroid(eps=1e-15, power=0.1)
 
             with pyro.plate("k_denovo", self.k_denovo):  # rows
                 beta_denovo = pyro.sample("latent_signatures", dist.Dirichlet(centroid))
@@ -202,8 +202,23 @@ class PyBasilica():
             pyro.sample("obs", dist.Poisson(a).to_event(1), obs=self.x)
 
         if self.k_denovo > 0:
-            # pyro.factor("penalty", self.n_samples * self.contexts * torch.sum(beta_fixed_cum * (torch.abs(beta_fixed_cum - beta_denovo))))
-            pyro.factor("penalty", 1 / (1e-9 + dist.Dirichlet(beta_fixed_cum*500).to_event(1).log_prob(beta_denovo)))
+            alpha_recomputed = self._get_alpha_stick_breaking(alpha_star=alpha, beta_weights=beta_weight)
+            beta_fixed_cum = self._compute_cum_beta_fixed(self.beta_fixed)
+            pyro.factor("penalty", self._compute_penalty(alpha=alpha_recomputed, beta_fixed_cum=beta_fixed_cum, beta_denovo=beta_denovo) )
+
+
+    def _compute_penalty(self, alpha, beta_fixed_cum, beta_denovo):
+        # return self.n_samples * self.contexts * torch.sum(beta_fixed_cum * (torch.abs(beta_fixed_cum - beta_denovo)))
+        # res = - ( torch.finfo().tiny + dist.Dirichlet(torch.matmul(alpha, beta_fixed_cum)*500).to_event(1).log_prob(torch.matmul(alpha, beta_denovo)) )
+        alpha_fixed = torch.sum(alpha[:,:self.k_fixed], dim=0).unsqueeze(1)
+        alpha_denovo = torch.sum(alpha[:,self.k_fixed:], dim=0).unsqueeze(1)
+
+        w_fixed = torch.sum(beta_fixed_cum * alpha_fixed, dim=0)
+        w_denovo = torch.sum(beta_denovo * alpha_denovo, dim=0)
+
+        w_difference = torch.abs(w_fixed - w_denovo)
+        res = self.n_samples * torch.sum(w_fixed * w_difference)
+        return res
 
 
     def guide(self):
@@ -243,14 +258,11 @@ class PyBasilica():
                 pyro.sample("beta_w_dn", dist.Delta(pi_beta_w).to_event(1))
 
 
-    def _get_beta_centroid(self, beta_denovo=None, eps=1e-10, power=1):
-        cum_weights = torch.ones((self.k_denovo, self.k_fixed))/self.k_fixed
-        beta_fixed_cum = self._get_unique_beta_stick_breaking(beta_fixed=self.beta_fixed, 
-                                                              beta_denovo=beta_denovo, 
-                                                              beta_weights=cum_weights)
+    def _get_beta_centroid(self, eps=1e-10, power=1):
+        beta_fixed_cum = self._compute_cum_beta_fixed(self.beta_fixed)
         max_val = beta_fixed_cum.max()
         centroid = (max_val - beta_fixed_cum + eps) ** power
-        return centroid, beta_fixed_cum
+        return centroid
 
 
     def _initialize_params_nonhier(self):
@@ -264,8 +276,8 @@ class PyBasilica():
             epsilon = dist.HalfNormal(torch.ones(self.n_samples, self.contexts, dtype=torch.float64) * eps_sigma).sample()
 
         if self.k_denovo > 0:
-            centroid, _ = self._get_beta_centroid(beta_denovo=None, eps=1e-3, power=0.5)
-            beta_dn = dist.Dirichlet(centroid).sample()
+            centroid = self._get_beta_centroid(eps=1e-3, power=0.5)
+            beta_dn = dist.Dirichlet(centroid).sample((self.k_denovo,))
 
             beta_weights = dist.Dirichlet(torch.cat((torch.ones(self.k_fixed) * 10, torch.ones(1)))).sample((self.k_denovo,))
 
@@ -308,14 +320,16 @@ class PyBasilica():
         return torch.cat((beta_fixed, beta_denovo), axis=0)
 
 
-    def _get_unique_beta_stick_breaking(self, beta_fixed, beta_denovo, beta_weights, convert=False):
-        beta = torch.zeros(self.k_denovo, self.contexts, dtype=torch.float64) 
+    def _compute_cum_beta_fixed(self, beta_fixed):
+        return torch.sum(beta_fixed, dim=0)
 
-        for j in range(self.k_denovo):
+
+    def _get_unique_beta_stick_breaking(self, beta_fixed, beta_denovo, beta_weights, convert=False):
+        beta = torch.zeros(beta_weights.shape[0], self.contexts, dtype=torch.float64)
+
+        for j in range(beta_weights.shape[0]):
             for r in range(self.k_fixed):
                 beta[j] += beta_weights[j,r] * beta_fixed[r]
-
-            if beta_denovo is not None:
                 beta[j] += beta_denovo[j]
 
         if not convert: return beta
@@ -409,22 +423,21 @@ class PyBasilica():
         self._initialize_params()
 
         svi = SVI(self.model, self.guide, optimizer, loss=elbo)
-        loss = svi.step()
-        print(loss)
+        loss = float(svi.step())
 
         train_params_each = 2 if self.n_steps <= 100 else int(self.n_steps / 100)
         gradient_norms = defaultdict(list)
         for name, value in pyro.get_param_store().named_parameters():
             value.register_hook(lambda g, name=name: gradient_norms[name].append(g.norm().item()))
 
-        self.losses = list()
-        self.likelihoods = list()
-        self.train_params = list()
+        self.losses, self.regs, self.likelihoods, self.train_params = list(), list(), list(), list()
+
         t = trange(self.n_steps, desc='Bar desc', leave=True)
         for i in t:   # inference - do gradient steps
-            loss = svi.step()
+            loss = float(svi.step())
             self.losses.append(loss)
 
+            self.regs.append(self.compute_regularization(beta_denovo=self._get_param("beta_denovo")))
             self.likelihoods.append(self._likelihood(to_cpu=False))
 
             if self.store_parameters and i%train_params_each==0: 
@@ -486,11 +499,15 @@ class PyBasilica():
         self._set_aic()
         self.icl = None
 
-    
+
     def compute_regularization(self, beta_denovo):
+        if beta_denovo is None: return
         if not isinstance(beta_denovo, torch.Tensor): beta_denovo = torch.tensor(beta_denovo)
-        _, beta_fixed_cum = self._get_beta_centroid(beta_denovo=None, eps=1e-15, power=0.1)
-        return 1 / (1e-9 + dist.Dirichlet(beta_fixed_cum*500).to_event(1).log_prob(beta_denovo))
+        beta_fixed_cum = self._compute_cum_beta_fixed(self.beta_fixed)
+        alpha_star = self._get_param("alpha", normalize=True)
+        beta_weights = self._get_param("beta_weights")
+        alpha = self._get_alpha_stick_breaking(alpha_star=alpha_star, beta_weights=beta_weights)
+        return self._compute_penalty(alpha=alpha, beta_fixed_cum=beta_fixed_cum, beta_denovo=beta_denovo)
 
 
     def _set_bic(self):
