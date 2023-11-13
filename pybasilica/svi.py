@@ -279,7 +279,7 @@ class PyBasilica():
             centroid = self._get_beta_centroid(eps=1e-3, power=0.5)
             beta_dn = dist.Dirichlet(centroid).sample((self.k_denovo,))
 
-            beta_weights = dist.Dirichlet(torch.cat((torch.ones(self.k_fixed) * 10, torch.ones(1)))).sample((self.k_denovo,))
+            beta_weights = dist.Dirichlet(torch.cat((torch.ones(self.k_fixed) * 1, torch.ones(1)))).sample((self.k_denovo,))
 
         pi_conc0 = dist.Gamma(0.00001, 0.00001).sample([self.k_fixed])
 
