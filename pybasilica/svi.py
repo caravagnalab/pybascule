@@ -19,8 +19,9 @@ class PyBasilica():
         lr = 0.001,
         optim_gamma = 0.1,
         enumer = "parallel",
-        hyperparameters = {"alpha_sigma":0.1, "alpha_p_conc0":0.6, "alpha_conc":1., "eps_sigma":10, 
-                           "pi_conc0":0.6, "penalty_scale":100},
+        hyperparameters = {"alpha_sigma":0.1, "alpha_p_conc0":0.6, "alpha_conc":1., 
+                           "omega_conc":10., "eps_sigma":10, 
+                           "pi_conc0":0.6, "penalty_scale":10},
         dirichlet_prior = True,
         beta_fixed = None,
         compile_model = True,
@@ -32,8 +33,9 @@ class PyBasilica():
         seed = 10
         ):
 
-        self._hyperpars_default = {"alpha_sigma":0.1, "alpha_p_conc0":0.6, "alpha_conc":1., "eps_sigma":10, 
-                                   "pi_conc0":0.6, "penalty_scale":100}
+        self._hyperpars_default = {"alpha_sigma":0.1, "alpha_p_conc0":0.6, "alpha_conc":1., 
+                                   "omega_conc":10., "eps_sigma":10, "pi_conc0":0.6, 
+                                   "penalty_scale":10}
         self.dirichlet_prior = dirichlet_prior
 
         self._set_data_catalogue(x)
@@ -73,14 +75,22 @@ class PyBasilica():
 
         if hyperparameters is None:
             self.hyperparameters = self._hyperpars_default
+            self.hyperparameters["omega_conc"] = torch.cat((torch.ones(self.k_denovo, self.k_fixed)*self._hyperpars_default["omega_conc"], 
+                                                            torch.ones(self.k_denovo, 1)), dim=1)
+            self.hyperparameters["alpha_conc"] = self._hyperpars_default["alpha_conc"] * torch.ones(self.K_alpha, dtype=torch.float64)
+
         else:
             self.hyperparameters = dict()
-            for parname in self._hyperpars_default.keys():
-                self.hyperparameters[parname] = hyperparameters.get(parname, self._hyperpars_default[parname])
+            for parname, value in self._hyperpars_default.items():
+                hyperpar = hyperparameters.get(parname, value)
+
                 if parname=="alpha_conc":
-                    self.hyperparameters[parname] = torch.ones(self.K_alpha, dtype=torch.float64) 
-            self.hyperparameters["omega_conc"] = torch.cat((torch.ones(self.k_denovo, self.k_fixed)*10, 
-                                                            torch.ones(self.k_denovo, 1)), dim=1)
+                    self.hyperparameters[parname] = hyperpar * torch.ones(self.K_alpha, dtype=torch.float64)
+                elif parname=="omega_conc":
+                    self.hyperparameters[parname] = torch.cat((torch.ones(self.k_denovo, self.k_fixed)*hyperpar, 
+                                                               torch.ones(self.k_denovo, 1)), dim=1)
+                else:
+                    self.hyperparameters[parname] = hyperpar
 
 
     def _fix_zero_denovo_null_reference(self):
