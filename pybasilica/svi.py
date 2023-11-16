@@ -3,21 +3,17 @@ import pandas as pd
 import torch
 import pyro
 from pyro.infer import SVI,Trace_ELBO, JitTrace_ELBO, TraceEnum_ELBO
-from pyro.ops.indexing import Vindex
-from pyro.optim import Adam
 from sklearn.cluster import KMeans
 import pyro.distributions.constraints as constraints
 import pyro.distributions as dist
 import torch.nn.functional as F
 
 from tqdm import trange
-from logging import warning
 from collections import defaultdict
 
 import numpy as np
 import pandas as pd
 import warnings
-from statsmodels.tsa.stattools import adfuller
 from statsmodels.tsa.stattools import kpss
 
 
@@ -163,6 +159,8 @@ class PyBasilica():
 
         if isinstance(self.hyperparameters["alpha_conc"], int):
             self.hyperparameters["alpha_conc"] = torch.ones(self.k_denovo + self.k_fixed, dtype=torch.float64)
+            self.hyperparameters["alpha_conc"] = torch.cat((torch.ones(self.k_fixed, dtype=torch.float64) * 10,
+                                 torch.ones(self.k_denovo, dtype=torch.float64)))
 
 
     def _fix_zero_contexts(self):
@@ -245,7 +243,6 @@ class PyBasilica():
                 q05 = alpha_prior - alpha_sigma
                 q95 = alpha_prior + alpha_sigma
 
-
                 self.alpha_sigma_corr = (q95 - q05) / ( dist.Normal(alpha_prior, 1).icdf(torch.tensor(1-0.05/2)) -\
                                                        dist.Normal(alpha_prior, 1).icdf(torch.tensor(0.05/2)) )
 
@@ -275,14 +272,13 @@ class PyBasilica():
         # Beta
         beta_denovo = None
         if self.k_denovo > 0:
-            # with pyro.plate("k_denovo", self.k_denovo):
-            #     beta_denovo = pyro.sample("latent_signatures", dist.Dirichlet(torch.ones(self.contexts, dtype=torch.float64)))
+            with pyro.plate("k_denovo", self.k_denovo):
+                beta_denovo = pyro.sample("latent_signatures", dist.Dirichlet(torch.ones(self.contexts, dtype=torch.float64)))
 
-            with pyro.plate("contexts", self.contexts):  # columns
-                with pyro.plate("k_denovo", self.k_denovo):  # rows
-                    beta_denovo = pyro.sample("latent_signatures", dist.HalfNormal(beta_d_sigma))
-
-            beta_denovo = self._norm_and_clamp(beta_denovo)
+            # with pyro.plate("contexts", self.contexts):  # columns
+            #     with pyro.plate("k_denovo", self.k_denovo):  # rows
+            #         beta_denovo = pyro.sample("latent_signatures", dist.HalfNormal(beta_d_sigma))
+            # beta_denovo = self._norm_and_clamp(beta_denovo)
 
         beta = self._get_unique_beta(self.beta_fixed, beta_denovo)  # put together fixed and denovo
         reg = self._regularizer(self.beta_fixed, beta_denovo, self.regularizer)  # compute the regularization if needed
@@ -370,8 +366,8 @@ class PyBasilica():
             if not self._noise_only:
                 alpha_param = init_params["alpha"]
                 if self.enforce_sparsity:
+                    alpha = pyro.param("alpha", lambda: init_params["alpha"], constraint=constraints.simplex)
                     with pyro.plate("n", n_samples):
-                        alpha = pyro.param("alpha", init_params["alpha"], constraint=constraints.simplex)
                         pyro.sample("latent_exposure", dist.Delta(alpha).to_event(1))
 
                 else:
@@ -393,14 +389,14 @@ class PyBasilica():
 
         # Beta
         if k_denovo > 0:
-            # beta_param = pyro.param("beta_denovo", lambda: init_params["beta_dn_param"], constraint=constraints.simplex)
-            # with pyro.plate("k_denovo", k_denovo):
-            #     pyro.sample("latent_signatures", dist.Delta(beta_param).to_event(1))
+            beta_param = pyro.param("beta_denovo", lambda: init_params["beta_dn_param"], constraint=constraints.simplex)
+            with pyro.plate("k_denovo", k_denovo):
+                pyro.sample("latent_signatures", dist.Delta(beta_param).to_event(1))
 
-            beta_param = pyro.param("beta_denovo", lambda: init_params["beta_dn_param"], constraint=constraints.greater_than_eq(0.0))
-            with pyro.plate("contexts", self.contexts):
-                with pyro.plate("k_denovo", k_denovo):
-                    pyro.sample("latent_signatures", dist.Delta(beta_param))
+            # beta_param = pyro.param("beta_denovo", lambda: init_params["beta_dn_param"], constraint=constraints.greater_than_eq(0.0))
+            # with pyro.plate("contexts", self.contexts):
+            #     with pyro.plate("k_denovo", k_denovo):
+            #         pyro.sample("latent_signatures", dist.Delta(beta_param))
 
 
     def check_input_kmeans(self, counts):
@@ -517,7 +513,9 @@ class PyBasilica():
             ones_tmp = torch.ones(self.n_samples, self.K, dtype=torch.float64)
 
         if self.enforce_sparsity:
-            alpha = dist.Dirichlet(torch.ones(self.K, dtype=torch.float64)).sample((self.n_samples,))
+            alpha_centroid = torch.cat((torch.ones(self.k_fixed, dtype=torch.float64) * 10,
+                                 torch.ones(self.k_denovo, dtype=torch.float64)))
+            alpha = dist.Dirichlet(alpha_centroid).sample((self.n_samples,))
         else:
             alpha = dist.HalfNormal(ones_tmp * alpha_sigma).sample()
 
@@ -525,7 +523,8 @@ class PyBasilica():
             epsilon = dist.HalfNormal(torch.ones(self.n_samples, self.contexts, dtype=torch.float64) * eps_sigma).sample()
 
         if self.k_denovo > 0:
-            beta_dn = dist.HalfNormal(torch.ones(self.k_denovo, self.contexts, dtype=torch.float64) * beta_d_sigma).sample()
+            # beta_dn = dist.HalfNormal(torch.ones(self.k_denovo, self.contexts, dtype=torch.float64) * beta_d_sigma).sample()
+            beta_dn = dist.Dirichlet(torch.ones(self.contexts, dtype=torch.float64)).sample((self.k_denovo,))
 
         params = self._create_init_params_dict(pi=pi, alpha_prior=alpha_prior, alpha=alpha, epsilon=epsilon, beta_dn=beta_dn)
 
@@ -681,6 +680,7 @@ class PyBasilica():
         self.regs = list()
         self.likelihoods = list()
         self.train_params = list()
+        t = trange(self.n_steps, desc="Bar desc", leave=True)
         for i in range(self.n_steps):   # inference - do gradient steps
             loss = float(svi.step())
             self.losses.append(loss)
@@ -690,6 +690,10 @@ class PyBasilica():
 
             if self.store_parameters and i%50==0: 
                 self.train_params.append(self.get_param_dict(convert=True, all=False))
+
+            if i%5 == 0:
+                t.set_description("ELBO %f" % loss)
+                t.refresh()
 
             # convergence test 
             # if len(losses) >= 100 and len(losses) % 100 == 0 and convergence(x=losses[-100:], alpha=0.05):
