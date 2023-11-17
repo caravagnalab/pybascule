@@ -355,16 +355,13 @@ class PyBasilica_mixture():
         for name, value in pyro.get_param_store().named_parameters():
             value.register_hook(lambda g, name=name: gradient_norms[name].append(g.norm().item()))
 
-        self.losses = list()
-        self.regs = list()
-        self.likelihoods = list()
-        self.train_params = list()
+        self.losses, self.regs, self.likelihoods, self.train_params = list(), list(), list(), list()
         for i in range(self.n_steps):   # inference - do gradient steps
             self._curr_step = i
             loss = float(svi.step())
             self.losses.append(loss)
 
-            # self.likelihoods.append(self._likelihood_mixture(to_cpu=False).sum())
+            self.likelihoods.append(self._likelihood_mixture(to_cpu=False).sum())
 
             if self.store_parameters and i%50==0: 
                 self.train_params.append(self.get_param_dict(convert=True, to_cpu=False))
