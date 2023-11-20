@@ -219,11 +219,11 @@ class PyBasilica_mixture():
     def run_kmeans(self, X, G, seed):
         X = self._to_cpu(X, move=True)
         try:
-            km = KMeans(n_clusters=G, random_state=seed).fit(X.numpy())
+            km = KMeans(n_clusters=G, random_state=seed, n_init="warn").fit(X.numpy())
 
         except:
             removed_idx, data_unq = self.check_input_kmeans(X.numpy())  # if multiple points are equal the function will throw an error
-            km = KMeans(n_clusters=G, random_state=seed).fit(data_unq)
+            km = KMeans(n_clusters=G, random_state=seed, n_init="warn").fit(data_unq)
 
             clusters = km.labels_
             for rm in sorted(removed_idx.keys()):
