@@ -540,21 +540,23 @@ class PyBasilica_mixture():
         new_param = []
         max_shape = max([i.shape[1] for i in param])
         for i in range(len(param)):
-            if param[i].shape[1] < max_shape:
-                pad_dims = max_shape - param[i].shape[1]
-                columns = list(str(i)+"_"+param[i].columns) + [str(i)+"_P"+str(j) for j in range(pad_dims)]
-                index = param[i].index
-                values = F.pad(input=torch.tensor(param[i].values), pad=(0, pad_dims, 0,0), mode="constant", value=torch.finfo().tiny)
+            par_i = param[i]
+            if par_i.shape[1] < max_shape:
+                pad_dims = max_shape - par_i.shape[1]
+                columns = list(str(i)+"_"+par_i.columns) + [str(i)+"_P"+str(j) for j in range(pad_dims)]
+                index = par_i.index
+                values = F.pad(input=self._to_cpu(torch.tensor(par_i.values)), pad=(0, pad_dims, 0,0), mode="constant", value=torch.finfo().tiny)
                 new_param.append(pd.DataFrame(values.numpy(), index=index, columns=columns))
             else: 
-                new_param.append(param[i].copy(deep=True))
-                new_param[i].columns = list(str(i)+"_"+param[i].columns)
+                new_param.append(par_i.copy(deep=True))
+                new_param[i].columns = list(str(i)+"_"+par_i.columns)
         return new_param
 
 
     def convert_to_dataframe(self, alpha):
         # mutations catalogue
-        if not isinstance(alpha, list): alpha = [alpha]
+        if isinstance(alpha, list): alpha = [self._to_cpu(i, move=True) for i in alpha]
+        if not isinstance(alpha, list): alpha = [self._to_cpu(alpha, move=True)]
 
         self.alpha = pd.concat(self._pad_dataframes(alpha), axis=1)
         sample_names, sigs = list(self.alpha.index), list(self.alpha.columns)
