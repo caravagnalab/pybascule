@@ -455,6 +455,7 @@ class PyBasilica():
         self.gradient_norms = dict(gradient_norms) if gradient_norms is not None else None
         self._set_params()
         self.likelihood = self._likelihood(to_cpu=True)
+        self.likelihood_reg = self._likelihood(to_cpu=True) + self.compute_regularization(self._get_param("beta_denovo", to_cpu=True), to_cpu=True)
 
         self.set_scores()
 
@@ -500,7 +501,7 @@ class PyBasilica():
 
 
     def compute_regularization(self, beta_denovo, to_cpu=False):
-        if beta_denovo is None: return
+        if beta_denovo is None: return 0
         if not isinstance(beta_denovo, torch.Tensor): beta_denovo = torch.tensor(beta_denovo)
         beta_fixed_cum = self._compute_cum_beta_fixed(self.beta_fixed)
         alpha_star = self._get_param("alpha", normalize=True, to_cpu=to_cpu)
@@ -510,27 +511,42 @@ class PyBasilica():
 
 
     def _set_bic(self):
-        _log_like = self.likelihood 
-        if self.k_denovo>0: _log_like += self.compute_regularization(self._get_param("beta_denovo", to_cpu=True), to_cpu=True)
-
+        _log_like = self.likelihood_reg
         k = self._number_of_params() 
-        n = self.n_samples
-        bic = k * torch.log(torch.tensor(n, dtype=torch.float64)) - (2 * _log_like)
-
+        bic = k * torch.log(torch.tensor(self.n_samples, dtype=torch.float64)) - (2 * _log_like)
         self.bic = bic.item()
 
 
     def _set_aic(self):
-        _log_like = self.likelihood
-        if self.k_denovo>0: _log_like += self.compute_regularization(self._get_param("beta_denovo", to_cpu=True), to_cpu=True)
-
+        _log_like = self.likelihood_reg
         k = self._number_of_params() 
         aic = 2*k - 2*_log_like
 
-        if (isinstance(aic, torch.Tensor)):
-            self.aic = aic.item()
-        else:
-            self.aic = aic
+        if (isinstance(aic, torch.Tensor)): self.aic = aic.item()
+        else: self.aic = aic
+
+
+    # def _set_icl(self):
+    #     icl = self.bic + self._compute_entropy()
+    #     self.icl = icl.item()
+
+
+    # def _compute_denovo_cosine(self):
+    #     denovo 
+
+
+    def _compute_entropy(self) -> np.array:
+        '''
+        `entropy(z) = - sum^K( sum^N( z_probs_nk * log(z_probs_nk) ) )`
+        `entropy(z) = - sum^K( sum^N( exp(log(z_probs_nk)) * log(z_probs_nk) ) )`
+        '''
+
+        matrix = self._compute_denovo_cosine()
+        entr = 0
+        for n in range(self.n_samples):
+            for k in range(self.cluster):
+                entr += torch.exp(matrix[k,n]) * matrix[k,n]
+        return -entr.detach()
 
 
     def _number_of_params(self):

@@ -33,7 +33,6 @@ class PyBasilica_mixture():
         store_parameters = False,
 
         seed = 10,
-
         nonparam = True
         ):
 
@@ -191,19 +190,23 @@ class PyBasilica_mixture():
 
 
     def _check_kmeans(self, X):
+        '''
+        If there are less than 2 identical samples in the data the kmeans cannot be run.
+        '''
         if X.unique(dim=0).shape[0] < 2:
             return False
         return True
 
 
     def _find_best_G(self, X, g_interval, seed, index_fn=calinski_harabasz_score):
+        ## g_interval is 0:G
         g_min = min(max(g_interval[0], 2), X.unique(dim=0).shape[0])
-        g_max = min(g_min, X.unique(dim=0).shape[0])
+        g_max = max(g_interval[-1], g_min)
 
         if g_min > g_max: g_max = g_min + 1
         if g_min == g_max: return g_min
 
-        k_interval = (g_min, g_max)
+        k_interval = (int(g_min), int(g_max))
 
         scores = torch.zeros(k_interval[1])
         for g in range(k_interval[0], k_interval[1]):
@@ -213,17 +216,17 @@ class PyBasilica_mixture():
             scores[real_g] = max(scores[real_g], index_fn(X, labels))
 
         best_k = scores.argmax()  # best k is the one maximing the calinski score
-        return best_k
+        return int(best_k)
 
 
     def run_kmeans(self, X, G, seed):
         X = self._to_cpu(X, move=True)
         try:
-            km = KMeans(n_clusters=G, random_state=seed, n_init="warn").fit(X.numpy())
+            km = KMeans(n_clusters=G, random_state=seed, n_init=10).fit(X.numpy())
 
         except:
             removed_idx, data_unq = self.check_input_kmeans(X.numpy())  # if multiple points are equal the function will throw an error
-            km = KMeans(n_clusters=G, random_state=seed, n_init="warn").fit(data_unq)
+            km = KMeans(n_clusters=G, random_state=seed, n_init=10).fit(data_unq)
 
             clusters = km.labels_
             for rm in sorted(removed_idx.keys()):
@@ -261,7 +264,7 @@ class PyBasilica_mixture():
         Function to run KMeans on the counts.
         Returns the vector of mixing proportions and the clustering assignments.
         '''
-        best_G = self._find_best_G(X=X, g_interval=[_ for _ in range(G-5, G+1)], seed=self._init_seed)
+        best_G = self._find_best_G(X=X, g_interval=[_ for _ in range(G+1)], seed=self._init_seed)
 
         if best_G < 2: return
 
@@ -272,12 +275,16 @@ class PyBasilica_mixture():
 
 
     def _initialize_params_clustering(self):
+        '''
+        Function to initialize the values for each parameter.
+        The pars are initialized through a Kmeans, run on the optimal number of clusters G.
+        '''
         pi = alpha_prior = None
 
         alpha_km = torch.cat(tuple(self.alpha.clone()), dim=1)
 
         pi_km = torch.ones((self.cluster,)) * 10e-3
-        alpha_prior_km = torch.ones((self.cluster, self.K * self.n_variants)) * 10e-3
+        alpha_prior_km = torch.ones((self.cluster, self.K * self.n_variants)) / self.K
 
         km, best_G = self.kmeans_optim(X=alpha_km, G=self.cluster)  # run the Kmeans
 
@@ -287,11 +294,11 @@ class PyBasilica_mixture():
         alpha_prior_km[:best_G,:] = self._norm_and_clamp(torch.tensor(km.cluster_centers_))
         alpha_prior_km[alpha_prior_km < torch.finfo().tiny] = torch.finfo().tiny
 
-        pi_km = dist.Dirichlet(pi_km * 30).sample()
+        pi_km = dist.Dirichlet(pi_km * 50).sample()
 
         last, alpha_prior = 0, list()
         for i in range(self.n_variants):
-            alpha_p_tmp = dist.Dirichlet(alpha_prior_km[:,last : last + self.K] * 30).sample()
+            alpha_p_tmp = dist.Dirichlet(alpha_prior_km[:,last : last + self.K] * 50).sample()
             alpha_p_tmp[alpha_p_tmp < torch.finfo().tiny] = torch.finfo().tiny
             alpha_p_tmp = self._norm_and_clamp(alpha_p_tmp)
 
