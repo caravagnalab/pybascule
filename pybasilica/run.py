@@ -14,10 +14,10 @@ from pybasilica.svi import PyBasilica
 from pybasilica.svi_mixture import PyBasilica_mixture
 
 
-def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1, n_steps = 500, enumer = "parallel", cluster = None, beta_fixed = None, 
-        hyperparameters = None, dirichlet_prior = True, compile_model = False, CUDA = False, enforce_sparsity = True, nonparametric = False, 
-        regularizer = "cosine", reg_weight = 0., regul_compare = None, regul_denovo = True, regul_fixed = True, stage = "", 
-        seed_list = [10], store_parameters = False, store_fits=False):
+def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1, n_steps = 500, enumer = "parallel", 
+        cluster = None, beta_fixed = None, hyperparameters = None, dirichlet_prior = True, 
+        compile_model = False, CUDA = False, nonparametric = False, stage = "",  seed_list = [10], 
+        store_parameters = False, store_fits=False):
 
     if isinstance(seed_list, int): seed_list = [seed_list]
     if isinstance(cluster, int) and cluster < 1: cluster = None
