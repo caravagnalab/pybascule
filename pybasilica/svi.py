@@ -589,27 +589,15 @@ class PyBasilica():
         if self.beta_fixed is not None and isinstance(self.beta_fixed, torch.Tensor) and torch.sum(self.beta_fixed) > 0:
             self.beta_fixed = pd.DataFrame(self.beta_fixed, index=fixed_names, columns=contexts)
 
-        for parname, par in self.params.items():
-            if par is None: continue
-            par = self._to_cpu(par, move=True)
-            if parname == "alpha": 
-                self.params[parname] = pd.DataFrame(np.array(par), index=sample_names, columns=fixed_names+denovo_names)
-            elif parname == "beta_d" or parname == "beta_star": 
-                self.params[parname] = pd.DataFrame(np.array(par), index=denovo_names, columns=contexts)
-            elif parname == "beta_f": 
-                self.params[parname] = self.beta_fixed
-            elif parname == "beta_w":
-                self.params[parname] = pd.DataFrame(np.array(par), index=denovo_names, columns=fixed_names+["DN"])
-            elif parname == "pi": 
-                self.params[parname] = par.tolist() if isinstance(par, torch.Tensor) else par
-            elif parname == "lambda_epsilon":
-                self.params[parname] = pd.DataFrame(np.array(par), index=sample_names, columns=contexts)
-            elif (parname == "alpha_prior" or parname == "alpha_prior_unn"): 
-                self.params[parname] = pd.DataFrame(np.array(par), index=range(self.n_groups), columns=fixed_names+denovo_names)
-            elif parname == "alpha_star": 
-                self.params[parname] = pd.DataFrame(np.array(par), index=sample_names, columns=denovo_names)
-            elif parname == "post_probs" and isinstance(par, torch.Tensor):
-                self.params[parname] = pd.DataFrame(np.array(torch.transpose(par, dim0=1, dim1=0)), index=sample_names , columns=range(self.n_groups))
+        self.params = self._convert_pars(param_dict=self.params, sample_names=sample_names, 
+                                         fixed_names=fixed_names, denovo_names=denovo_names, 
+                                         contexts=contexts)
+        
+        if len(self.train_params) > 0:
+            for i,v in enumerate(self.train_params):
+                self.train_params[i] = self._convert_pars(param_dict=v, sample_names=sample_names, 
+                                                          fixed_names=fixed_names, denovo_names=denovo_names, 
+                                                          contexts=contexts)
 
         for k, v in self.hyperparameters.items():
             if v is None: continue
@@ -621,6 +609,31 @@ class PyBasilica():
         self._set_init_params(sample_names=sample_names, fixed_names=fixed_names, 
                               denovo_names=denovo_names, contexts=contexts, 
                               alpha_columns=alpha_columns)
+        
+
+    def _convert_pars(self, param_dict, sample_names, fixed_names, denovo_names, contexts):
+        for parname, par in param_dict.items():
+            if par is None: continue
+            par = self._to_cpu(par, move=True)
+            if parname == "alpha": 
+                param_dict[parname] = pd.DataFrame(np.array(par), index=sample_names, columns=fixed_names+denovo_names)
+            elif parname == "beta_d" or parname == "beta_star": 
+                param_dict[parname] = pd.DataFrame(np.array(par), index=denovo_names, columns=contexts)
+            elif parname == "beta_f": 
+                param_dict[parname] = self.beta_fixed
+            elif parname == "beta_w":
+                param_dict[parname] = pd.DataFrame(np.array(par), index=denovo_names, columns=fixed_names+["DN"])
+            elif parname == "pi": 
+                param_dict[parname] = par.tolist() if isinstance(par, torch.Tensor) else par
+            elif parname == "lambda_epsilon":
+                param_dict[parname] = pd.DataFrame(np.array(par), index=sample_names, columns=contexts)
+            elif (parname == "alpha_prior" or parname == "alpha_prior_unn"): 
+                param_dict[parname] = pd.DataFrame(np.array(par), index=range(self.n_groups), columns=fixed_names+denovo_names)
+            elif parname == "alpha_star": 
+                param_dict[parname] = pd.DataFrame(np.array(par), index=sample_names, columns=denovo_names)
+            elif parname == "post_probs" and isinstance(par, torch.Tensor):
+                param_dict[parname] = pd.DataFrame(np.array(torch.transpose(par, dim0=1, dim1=0)), index=sample_names , columns=range(self.n_groups))
+        return param_dict
 
 
     def _set_init_params(self, sample_names, fixed_names, denovo_names, contexts, alpha_columns):
