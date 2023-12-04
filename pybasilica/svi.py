@@ -34,7 +34,7 @@ class PyBasilica():
         self._set_data_catalogue(x)
         self._hyperpars_default = {"alpha_sigma":0.1, "alpha_p_conc0":0.6, "alpha_conc":1., 
                                    "omega_conc":10., "eps_sigma":10, "pi_conc0":0.6, 
-                                   "penalty_scale":self.n_samples}
+                                   "penalty_scale":0}
         self._set_fit_settings(enforce_sparsity=enforce_sparsity, lr=lr, optim_gamma=optim_gamma, n_steps=n_steps,
                                compile_model=compile_model, CUDA=CUDA, store_parameters=store_parameters, 
                                stage=stage, seed=seed)
