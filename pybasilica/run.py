@@ -135,7 +135,11 @@ def run_fit(seed_list, kwargs, parname, parlist, score_name, store_fits, cls):
             best_idd = idd_i
 
         scores[idd_i] = scores_i
-        if store_fits: fits[idd_i] = fits_i
+        if store_fits: 
+            input_val = kwargs["x"] if "x" in kwargs.keys() else kwargs["alpha"]
+            for k, v in fits_i.items():
+                v.convert_to_dataframe(input_val)
+            fits[idd_i] = fits_i
 
     return best_run, scores, fits
 
