@@ -155,14 +155,6 @@ class PyBasilica():
             raise Exception("Invalid k_denovo value, expected integer!")
 
 
-    # def _mix_weights(self, beta):
-    #     '''
-    #     Function used for the stick-breaking process.
-    #     '''
-    #     beta1m_cumprod = (1 - beta).cumprod(-1)
-    #     return F.pad(beta, (0, 1), value=1) * F.pad(beta1m_cumprod, (1, 0), value=1)
-
-
     def model(self):
         n_samples, n_contexts = self.n_samples, self.contexts
         k_denovo, k_fixed = self.k_denovo, self.k_fixed
@@ -197,14 +189,6 @@ class PyBasilica():
             beta = self._get_unique_beta(beta_fixed=self.beta_fixed,
                                          beta_denovo=beta_denovo)
 
-        # if self.k_denovo > 0:
-        #     print("beta_dn", beta_denovo.get_device())
-        #     print("beta_conc", beta_conc.get_device())
-        # print("beta", beta.get_device())
-        # print("alpha", alpha.get_device())
-        # if self.stage == "random_noise": print("epsilon", epsilon.get_device())
-        # print("x", self.x.get_device())
-
         a = torch.matmul(torch.matmul(torch.diag(torch.sum(self.x, axis=1)), alpha), beta)
         if self.stage == "random_noise": a = a + epsilon
         with pyro.plate("contexts", n_contexts):
@@ -215,22 +199,12 @@ class PyBasilica():
             alpha_recomputed = self._get_alpha_stick_breaking(alpha_star=alpha, beta_weights=beta_weight)
             beta_fixed_cum = self._compute_cum_beta_fixed(self.beta_fixed)
             penalty = self._compute_penalty(alpha=alpha_recomputed, beta_fixed_cum=beta_fixed_cum, beta_denovo=beta_denovo)
-            # print("alpha_rec", alpha_recomputed.get_device())
-            # print("beta_fixed_cum", beta_fixed_cum.get_device())
-            # print("penalty", penalty.get_device())
             pyro.factor("penalty", penalty)
-
-        # print("Model done\n\n")
 
 
     def _compute_penalty(self, alpha, beta_fixed_cum, beta_denovo):
         alpha_fixed = torch.sum(alpha[:,:self.k_fixed], dim=0).unsqueeze(1)
         alpha_denovo = torch.sum(alpha[:,self.k_fixed:], dim=0).unsqueeze(1)
-
-        # print(beta_fixed_cum.get_device())
-        # print(beta_denovo.get_device())
-        # print(alpha_fixed.get_device())
-        # print(alpha_denovo.get_device())
 
         w_fixed = torch.sum(beta_fixed_cum * alpha_fixed, dim=0)
         w_denovo = torch.sum(beta_denovo * alpha_denovo, dim=0)
@@ -263,8 +237,6 @@ class PyBasilica():
             beta_param = pyro.param("beta_denovo", lambda: init_params["beta_dn_param"], constraint=constraints.simplex)
             with pyro.plate("k_denovo", k_denovo):
                 pyro.sample("latent_signatures", dist.Delta(beta_param).to_event(1))
-
-        # print("Guide done\n\n")
 
 
     def _get_beta_centroid(self, eps=1e-10, power=2):
