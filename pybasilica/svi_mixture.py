@@ -153,7 +153,7 @@ class PyBasilica_mixture():
                                                                                 logits=torch.log(pi)))
             z = z_onehot.argmax(dim=-1).long()  # first find argmax over variant types (dim=-2), then over clusters (dim=-1)
 
-            # z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":self.enumer})
+            # # z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":self.enumer})
 
             for v in pyro.plate("n_vars2", n_variants):
                 pyro.sample(f"obs_{v}", dist.Dirichlet(Vindex(alpha_prior * sf_alpha)[v,z,:]), 
@@ -181,9 +181,10 @@ class PyBasilica_mixture():
             with pyro.plate("n_vars1", n_variants):
                 pyro.sample("alpha_prior", dist.Delta(alpha_prior_param).to_event(1))
 
-        latent_class = pyro.param("latent_class_param", lambda: init_params["latent_class"], constraint=constraints.simplex)
+        # latent_class = pyro.param("latent_class_param", lambda: init_params["latent_class"], constraint=constraints.simplex)
         with pyro.plate("n", n_samples):
-            pyro.sample("latent_class", dist.Delta(latent_class).to_event(1))
+            pyro.sample("latent_class", dist.RelaxedOneHotCategorical(temperature=torch.tensor(0.1), 
+                                                                      logits=torch.log(pi_param)))
             # pyro.sample("latent_class", dist.Categorical(pi_param), infer={"enumerate":self.enumer})
 
 
@@ -375,7 +376,7 @@ class PyBasilica_mixture():
             loss = float(svi.step())
             self.losses.append(loss)
 
-            self.likelihoods.append(self._likelihood_mixture(to_cpu=False, detach=False).clone().detach().sum())
+            # self.likelihoods.append(self._likelihood_mixture(to_cpu=False, detach=False).clone().detach().sum())
 
             if self.store_parameters and i%train_params_each==0:
                 self.train_params.append(self.get_param_dict(convert=True, to_cpu=False, detach=True))
@@ -464,12 +465,14 @@ class PyBasilica_mixture():
         assert params["alpha_prior"].shape == (self.cluster, self.n_variants, self.K)
         assert alpha.shape == (self.n_samples, self.n_variants, self.K)
 
+        sf = 1000
+
         llik = torch.zeros(self.cluster, self.n_samples)
         for g in range(self.cluster):
             lprob_alpha = torch.zeros((self.n_variants, self.n_samples))
             for v in range(self.n_variants):
                 alpha_prior_g = params["alpha_prior"][g, v]
-                lprob_alpha[v] = dist.Dirichlet(alpha_prior_g).log_prob(alpha[:,v,:])
+                lprob_alpha[v] = dist.Dirichlet(alpha_prior_g * sf).log_prob(alpha[:,v,:])
 
             assert lprob_alpha.shape == (self.n_variants, self.n_samples)
 
