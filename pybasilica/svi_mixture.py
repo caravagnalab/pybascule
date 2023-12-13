@@ -287,50 +287,105 @@ class PyBasilica_mixture():
         `alpha_prior` is estimated as G x K*V
         '''
         pi = alpha_prior = None
-        sf = 10
 
         alpha_perm = torch.permute(self.alpha.clone(), (1,0,2))
         alpha_km = torch.cat(tuple(alpha_perm), dim=1)
 
-        pi_km = torch.ones((self.cluster,)) * 10e-4
-        alpha_prior_km = torch.ones((self.cluster, self.K * self.n_variants)) / self.K
+        km = self.run_kmeans(X=alpha_km, G=self.cluster, seed=self._init_seed)
 
-        km, best_G = self.kmeans_optim(X=alpha_km, G=self.cluster)  # run the Kmeans
-
+        clusters = torch.tensor(km.labels_)
+        
         ## setup mixing proportion vector
-        pi_km[:best_G] = torch.tensor([(np.where(km.labels_ == g)[0].shape[0]) / self.n_samples for g in range(km.n_clusters)])
-        pi_km = dist.Dirichlet(pi_km * sf).sample()
+        pi_km = torch.tensor([(np.where(clusters == g)[0].shape[0]) for g in range(km.n_clusters)], dtype=torch.float64)
+        pi_km = dist.Dirichlet(pi_km).sample()
 
-        alpha_prior_km[:best_G,:] = torch.tensor(km.cluster_centers_)
+        alpha_prior_km = torch.tensor(km.cluster_centers_)
         last, alpha_prior = 0, list()
         for _ in range(self.n_variants):
-            alpha_p_tmp = dist.Dirichlet(alpha_prior_km[:, last:(last + self.K)] * sf).sample()
+            alpha_p_tmp = dist.Dirichlet(alpha_prior_km[:, last:(last + self.K)]).sample()
             alpha_p_tmp[alpha_p_tmp < torch.finfo().tiny] = torch.finfo().tiny
             alpha_p_tmp = self._norm_and_clamp(alpha_p_tmp)
 
             alpha_prior.append(alpha_p_tmp)
             last = last + self.K
 
-
         latent_class_km = dist.RelaxedOneHotCategorical(temperature=torch.tensor(0.1), 
-                                                                   logits=torch.log(pi_km)).sample((self.n_samples,))
+                                                        logits=torch.log(pi_km)).sample((self.n_samples,))
         latent_class_km[latent_class_km < torch.finfo().tiny] = torch.finfo().tiny
 
         latent_class =  self._to_gpu(latent_class_km, move=True)
         pi = self._to_gpu(pi_km, move=True)
         alpha_prior = self._to_gpu(torch.stack(alpha_prior), move=True)
+        alpha_prior = torch.permute(alpha_prior.clone().detach().double(), (1,0,2))
 
-        return self._set_init_params_dict(alpha_prior=torch.permute(alpha_prior.clone().detach().double(), (1,0,2)), 
+        variances = self._compute_empirical_variance(alpha=self.alpha, 
+                                                     alpha_prior=alpha_prior, 
+                                                     clusters=clusters)
+
+        return self._set_init_params_dict(alpha_prior=alpha_prior, 
                                           pi=pi.clone().detach().double(), 
                                           latent_class=latent_class.clone().detach().double(),
-                                          clusters=torch.tensor(km.labels_))
+                                          variances=variances,
+                                          clusters=clusters)
 
 
-    def _set_init_params_dict(self, alpha_prior=None, pi=None, latent_class=None, clusters=None):
+    def _compute_empirical_variance(self, alpha, alpha_prior, clusters):
+        variances = torch.zeros(self.cluster, self.n_variants, self.K)
+        scale_factors = torch.zeros(self.cluster, self.n_variants, self.K)
+        for g in range(self.cluster):
+            alpha_g = alpha[np.where(clusters == g)[0]]
+            for v in range(self.n_variants):
+                alpha_v = alpha_g[:,v,:]
+                variances[g, v] = torch.var(alpha_v, dim=0)
+                for k in range(self.K):
+                    scale_factors[g, v, k] = self._solver(target=variances[g,v,k], 
+                                                          alpha_k=alpha_prior[g,v,k],
+                                                          alpha_hat=torch.sum(alpha_prior[g,v]))
+
+        variances[variances < torch.finfo().tiny] = torch.finfo().tiny
+        return variances
+    
+
+    def _compute_scale_factors(self, alpha_prior):
+        variances = self.init_params["variances"]
+
+        assert variances.shape == (self.cluster, self.n_variants, self.K)
+
+        scale_factors = torch.zeros(self.cluster, self.n_variants, self.K)
+        for g in range(self.cluster):
+            for v in range(self.n_variants):
+                for k in range(self.K):
+                    scale_factors[g, v, k] = self._solver(target=variances[g,v,k], 
+                                                          alpha_k=alpha_prior[g,v,k],
+                                                          alpha_hat=torch.sum(alpha_prior[g,v]))
+
+        scale_factors[scale_factors < 1.] = 1.
+        return scale_factors
+
+
+    def _solver(self, target, alpha_hat, alpha_k):
+        a = target*alpha_hat**3
+        b = target*alpha_hat**2
+        c = alpha_k**2 - alpha_k*alpha_hat
+
+        d = np.sqrt(b**2 - 4*a*c)
+        xs = np.array([(-b + d) / (2*a), (-b - d) / (2*a)])
+        return np.amax(xs)
+
+
+    # def _compute_dirichlet_variance(self, alpha):
+    #     alpha_hat = np.sum(alpha)
+    #     num = alpha * (alpha_hat - alpha)
+    #     denomin = alpha_hat**2 * (alpha_hat + 1)
+    #     return num / denomin
+
+
+    def _set_init_params_dict(self, alpha_prior=None, pi=None, latent_class=None, variances=None, clusters=None):
         return {"alpha_prior":alpha_prior,
                 "pi":pi,
                 "sf_centroid":torch.tensor(self.hyperparameters["scale_factor_centroid"]).clone().detach().double(),
                 "latent_class":latent_class,
+                "variances":variances,
                 "init_clusters":clusters}
 
 
@@ -404,10 +459,11 @@ class PyBasilica_mixture():
                        **self.get_param_dict(convert=True, to_cpu=True, 
                                              permute=False)}
 
-        self.init_params = self._get_init_param_dict(convert=True, to_cpu=True)
         self.bic = self.aic = self.icl = self.reg_likelihood = None
         self.likelihood = self._likelihood_mixture(to_cpu=True).sum().item()
         self.set_scores()
+
+        self.init_params = self._get_init_param_dict(convert=True, to_cpu=True)
 
 
     def get_param_dict(self, convert=False, permute=False, to_cpu=True):
@@ -475,12 +531,14 @@ class PyBasilica_mixture():
         assert params["alpha_prior"].shape == (self.cluster, self.n_variants, self.K)
         assert alpha.shape == (self.n_samples, self.n_variants, self.K)
 
-        sf = 1000
+        scale_factor_matrix = self._compute_scale_factors(alpha_prior=params["alpha_prior"])
 
         llik = torch.zeros(self.cluster, self.n_samples)
         for g in range(self.cluster):
             lprob_alpha = torch.zeros((self.n_variants, self.n_samples))
             for v in range(self.n_variants):
+                # sf = scale_factor_matrix[g, v]
+                sf = 1000
                 alpha_prior_g = params["alpha_prior"][g, v]
                 lprob_alpha[v] = dist.Dirichlet(alpha_prior_g * sf).log_prob(alpha[:,v,:])
 
