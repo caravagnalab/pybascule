@@ -117,12 +117,13 @@ class PyBasilica():
             self.beta_fixed, self.k_fixed = None, 0
             return
 
-        self.fixed_names = list(beta_fixed.index) if isinstance(beta_fixed, pd.DataFrame) else ["F"+str(f+1) for f in range(beta_fixed.shape[0])]
         self.alpha_conc = None
+        self.fixed_names = list(beta_fixed.index) if isinstance(beta_fixed, pd.DataFrame) else ["F"+str(f+1) for f in range(beta_fixed.shape[0])]
+
         if isinstance(beta_fixed, pd.DataFrame):
-            first = [i for i in self.fixed_names if i in ["SBS1","SBS5"]]
-            others = [i for i in self.fixed_names if i not in ["SBS1","SBS5"]]
-            beta_fixed = beta_fixed.loc[first + others]
+        #     first = [i for i in self.fixed_names if i in ["SBS1","SBS5"]]
+        #     others = [i for i in self.fixed_names if i not in ["SBS1","SBS5"]]
+        #     beta_fixed = beta_fixed.loc[first + others]
             beta_fixed = beta_fixed.values
 
         self.beta_fixed = torch.tensor(beta_fixed, dtype=torch.float64)
@@ -261,7 +262,7 @@ class PyBasilica():
             beta_dn = dist.Dirichlet(beta_conc).sample((self.k_denovo,))
 
             omega_conc = self.hyperparameters["omega_conc"][0]
-            beta_weights = dist.Dirichlet(omega_conc).sample((self.k_denovo,))
+            # beta_weights = dist.Dirichlet(omega_conc).sample((self.k_denovo,))
 
         params = self._create_init_params_dict(pi=pi, alpha_prior=alpha_prior, alpha=alpha, epsilon=epsilon, 
                                                beta_dn=beta_dn, beta_weights=beta_weights, pi_conc0=pi_conc0)
@@ -564,7 +565,7 @@ class PyBasilica():
         self.params = self._convert_pars(param_dict=self.params, sample_names=sample_names, 
                                          fixed_names=fixed_names, denovo_names=denovo_names, 
                                          contexts=contexts)
-        
+
         if len(self.train_params) > 0:
             for i,v in enumerate(self.train_params):
                 self.train_params[i] = self._convert_pars(param_dict=v, sample_names=sample_names, 
