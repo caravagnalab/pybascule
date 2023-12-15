@@ -12,6 +12,7 @@ from pyro.infer.autoguide import AutoDelta
 from pyro.ops.indexing import Vindex
 from sklearn.cluster import KMeans
 from sklearn.metrics import calinski_harabasz_score
+from scipy.optimize import minimize_scalar
 from collections import defaultdict
 from copy import deepcopy
 from tqdm import trange
@@ -184,12 +185,12 @@ class PyBasilica_mixture():
             with pyro.plate("n_vars1", n_variants):
                 pyro.sample("alpha_prior", dist.Delta(alpha_prior_param).to_event(1))
 
-        latent_class = pyro.param("latent_class_param", lambda: init_params["latent_class"], 
-                                  constraint=constraints.simplex)
+        # latent_class = pyro.param("latent_class_param", lambda: init_params["latent_class"], 
+        #                           constraint=constraints.simplex)
         with pyro.plate("n", n_samples):
-            # pyro.sample("latent_class", dist.RelaxedOneHotCategorical(temperature=torch.tensor(0.1), 
-            #                                                           logits=torch.log(pi_param)))
-            pyro.sample("latent_class", dist.Delta(latent_class).to_event(1))
+            pyro.sample("latent_class", dist.RelaxedOneHotCategorical(temperature=torch.tensor(0.1), 
+                                                                      logits=torch.log(pi_param)))
+            # pyro.sample("latent_class", dist.Delta(latent_class).to_event(1))
             # pyro.sample("latent_class", dist.Categorical(pi_param), infer={"enumerate":self.enumer})
 
 
@@ -239,7 +240,6 @@ class PyBasilica_mixture():
             for rm in removed_idx.keys():
                 rpt = removed_idx[rm]  # the index of the kept row
                 clusters[rm] = clusters[rpt]  # insert in the repeated elements the correct cluster
-
         return km
 
 
@@ -294,7 +294,7 @@ class PyBasilica_mixture():
         km = self.run_kmeans(X=alpha_km, G=self.cluster, seed=self._init_seed)
 
         clusters = torch.tensor(km.labels_)
-        
+
         ## setup mixing proportion vector
         pi_km = torch.tensor([(np.where(clusters == g)[0].shape[0]) for g in range(km.n_clusters)], dtype=torch.float64)
         pi_km = dist.Dirichlet(pi_km).sample()
@@ -319,71 +319,100 @@ class PyBasilica_mixture():
         alpha_prior = torch.permute(alpha_prior.clone().detach().double(), (1,0,2))
 
         variances = self._compute_empirical_variance(alpha=self.alpha, 
-                                                     alpha_prior=alpha_prior, 
                                                      clusters=clusters)
+        
+        init_scale_factors = self._compute_scale_factors(alpha_prior=alpha_prior, variances=variances)
+        print(init_scale_factors)
+        sf_centroid = torch.amax(init_scale_factors)
 
         return self._set_init_params_dict(alpha_prior=alpha_prior, 
                                           pi=pi.clone().detach().double(), 
                                           latent_class=latent_class.clone().detach().double(),
                                           variances=variances,
+                                          sf_centroid=sf_centroid,
                                           clusters=clusters)
 
 
-    def _compute_empirical_variance(self, alpha, alpha_prior, clusters):
+    def _compute_empirical_variance(self, alpha, clusters):
         variances = torch.zeros(self.cluster, self.n_variants, self.K)
-        scale_factors = torch.zeros(self.cluster, self.n_variants, self.K)
         for g in range(self.cluster):
             alpha_g = alpha[np.where(clusters == g)[0]]
             for v in range(self.n_variants):
                 alpha_v = alpha_g[:,v,:]
                 variances[g, v] = torch.var(alpha_v, dim=0)
-                for k in range(self.K):
-                    scale_factors[g, v, k] = self._solver(target=variances[g,v,k], 
-                                                          alpha_k=alpha_prior[g,v,k],
-                                                          alpha_hat=torch.sum(alpha_prior[g,v]))
 
         variances[variances < torch.finfo().tiny] = torch.finfo().tiny
-        return variances
-    
+        # return variances
+        return np.median(variances, axis=0)
 
-    def _compute_scale_factors(self, alpha_prior):
-        variances = self.init_params["variances"]
 
-        assert variances.shape == (self.cluster, self.n_variants, self.K)
+    def _compute_scale_factors(self, variances=None, alpha_prior=None, convert=False, to_cpu=False):
+        if variances is None: variances = self.init_params["variances"]
+        if variances is None: return None
+        if alpha_prior is None:
+            alpha_prior = self._get_param("alpha_prior_param", convert=False, permute=True, concat=False, to_cpu=False)
 
-        scale_factors = torch.zeros(self.cluster, self.n_variants, self.K)
+        assert variances.shape == (self.n_variants, self.K)
+        assert alpha_prior.shape == (self.cluster, self.n_variants, self.K)
+
+        sf_vector = torch.zeros(self.cluster, self.n_variants)
         for g in range(self.cluster):
             for v in range(self.n_variants):
-                for k in range(self.K):
-                    scale_factors[g, v, k] = self._solver(target=variances[g,v,k], 
-                                                          alpha_k=alpha_prior[g,v,k],
-                                                          alpha_hat=torch.sum(alpha_prior[g,v]))
+                sf_gv = minimize_scalar(fun=self.variance_condition, bracket=(1,1000), 
+                                        args=(variances[v], alpha_prior[g, v])).x
+                if isinstance(sf_gv, torch.Tensor): sf_vector[g, v] = sf_gv.clone().detach()
+                else: sf_vector[g, v] = torch.tensor(sf_gv)
 
+        # keep the min for each variant
+        scale_factors = torch.amax(sf_vector, dim=0)
+        assert scale_factors.shape == (self.n_variants,)
         scale_factors[scale_factors < 1.] = 1.
+        scale_factors = self._convert(scale_factors, convert=convert, to_cpu=to_cpu)
         return scale_factors
 
 
-    def _solver(self, target, alpha_hat, alpha_k):
-        a = target*alpha_hat**3
-        b = target*alpha_hat**2
-        c = alpha_k**2 - alpha_k*alpha_hat
+    # def _compute_scale_factors(self, alpha_prior=None, variances=None, convert=False, to_cpu=False, permute=False, concat=False):
+    #     if variances is None: variances = self.init_params["variances"]
+    #     if variances is None: return None
+        
+    #     if alpha_prior is None:
+    #         alpha_prior = self._get_param("alpha_prior_param", convert=False, 
+    #                                       permute=True, concat=False, to_cpu=False)
 
-        d = np.sqrt(b**2 - 4*a*c)
-        xs = np.array([(-b + d) / (2*a), (-b - d) / (2*a)])
-        return np.amax(xs)
+    #     assert alpha_prior.shape == (self.cluster, self.n_variants, self.K)
+    #     assert variances.shape == (self.n_variants, self.K)
+
+    #     scale_factors = torch.zeros(self.n_variants, self.cluster, self.K)
+    #     for g in range(self.cluster):
+    #         for v in range(self.n_variants):
+    #             for k in range(self.K):
+    #                 scale_factors[v, g, k] = self._solver(target=variances[v,k], 
+    #                                                       alpha_k=alpha_prior[g,v,k],
+    #                                                       alpha_hat=torch.sum(alpha_prior[g,v]))
+
+    #     scale_factors[scale_factors < 1.] = 1.
+    #     scale_factors = self._convert(scale_factors, convert=convert, permute=permute, concat=concat, to_cpu=to_cpu)
+    #     return scale_factors
 
 
-    # def _compute_dirichlet_variance(self, alpha):
-    #     alpha_hat = np.sum(alpha)
-    #     num = alpha * (alpha_hat - alpha)
-    #     denomin = alpha_hat**2 * (alpha_hat + 1)
-    #     return num / denomin
+    def variance_condition(self, sf, target, alpha):
+        variances = self._compute_dirichlet_variance(alpha * sf)
+        return torch.amax(torch.abs(variances - target))
 
 
-    def _set_init_params_dict(self, alpha_prior=None, pi=None, latent_class=None, variances=None, clusters=None):
+    def _compute_dirichlet_variance(self, alpha):
+        alpha_hat = torch.sum(alpha)
+        num = alpha * (alpha_hat - alpha)
+        denomin = alpha_hat**2 * (alpha_hat + 1)
+        return num / denomin
+
+
+    def _set_init_params_dict(self, alpha_prior=None, pi=None, latent_class=None, variances=None, 
+                              sf_centroid=None, clusters=None):
+        self.hyperparameters["scale_factor_alpha"] = sf_centroid
         return {"alpha_prior":alpha_prior,
                 "pi":pi,
-                "sf_centroid":torch.tensor(self.hyperparameters["scale_factor_centroid"]).clone().detach().double(),
+                "sf_centroid":sf_centroid,
                 "latent_class":latent_class,
                 "variances":variances,
                 "init_clusters":clusters}
@@ -395,8 +424,10 @@ class PyBasilica_mixture():
         latent_class = dist.RelaxedOneHotCategorical(temperature=torch.tensor(0.1), 
                                                                    logits=torch.log(pi)).sample((self.n_samples,))
         latent_class[latent_class < torch.finfo().tiny] = torch.finfo().tiny
+        sf_centroid = torch.tensor(self.hyperparameters["scale_factor_centroid"]).double()
 
-        return self._set_init_params_dict(alpha_prior=alpha_prior, pi=pi, latent_class=latent_class)
+        return self._set_init_params_dict(alpha_prior=alpha_prior, pi=pi, 
+                                          sf_centroid=sf_centroid, latent_class=latent_class)
 
 
     def _initialize_params(self):
@@ -456,8 +487,7 @@ class PyBasilica_mixture():
 
         self.gradient_norms = dict(gradient_norms) if gradient_norms is not None else {}
         self.params = {**self._set_clusters(to_cpu=True), 
-                       **self.get_param_dict(convert=True, to_cpu=True, 
-                                             permute=False)}
+                       **self.get_param_dict(convert=True, permute=False, concat=True, to_cpu=True)}
 
         self.bic = self.aic = self.icl = self.reg_likelihood = None
         self.likelihood = self._likelihood_mixture(to_cpu=True).sum().item()
@@ -466,15 +496,15 @@ class PyBasilica_mixture():
         self.init_params = self._get_init_param_dict(convert=True, to_cpu=True)
 
 
-    def get_param_dict(self, convert=False, permute=False, to_cpu=True):
+    def get_param_dict(self, convert=False, permute=False, to_cpu=True, concat=False):
         params = dict()
         params["alpha_prior"] = self._get_param("alpha_prior_param", convert=convert, 
-                                                permute=permute, to_cpu=to_cpu)
+                                                permute=permute, concat=concat, to_cpu=to_cpu)
         params["pi"] = self._get_param("pi_param", convert=convert, to_cpu=to_cpu)
+        params["scale_factor_matrix"] = self._compute_scale_factors(convert=convert, permute=permute, 
+                                                                    concat=concat, to_cpu=to_cpu)
 
-        # params["scale_factor_alpha"] = self._get_param("scale_factor_alpha_param", convert=convert, to_cpu=to_cpu)
         params["scale_factor_centroid"] = self._get_param("sf_centroid_param", convert=convert, to_cpu=to_cpu)
-        # params["pi_conc0"] = self._get_param("pi_conc0_param", convert=convert, to_cpu=to_cpu)
         return params
 
 
@@ -484,11 +514,8 @@ class PyBasilica_mixture():
             if v is None: params[k] = v
             elif not convert: params[k] = v
             else:
-                v = self._to_cpu(v.clone().detach(), move=to_cpu)
-                if len(v.shape) > 2:
-                    v = torch.permute(v, (1,0,2))
-                    v = self._concat_tensors(v, dim=1)
-                params[k] = np.array(v)
+                v = self._convert(v, convert=convert, to_cpu=to_cpu, permute=True, concat=True)
+                params[k] = v
         return params
 
 
@@ -498,49 +525,44 @@ class PyBasilica_mixture():
         self._set_icl()
 
 
-    def _get_param(self, param_name, to_cpu=True, permute=False, convert=False):
+    def _get_param(self, param_name, to_cpu=True, permute=False, convert=False, concat=False):
         try:
-            # for k, v in pyro.get_param_store().items(): print(k, v)
             par = pyro.param(param_name)
-            par = self._to_cpu(par, move=to_cpu)
-            if isinstance(par, torch.Tensor): par = par.clone().detach()
-            if permute: par = torch.permute(par, (1,0,2))
-
-            if par is not None and convert:
-                par = self._to_cpu(par, move=True)
-                if len(par.shape) > 2: par = self._concat_tensors(par, dim=1)
-                par = np.array(par)
-
+            par = self._convert(par, convert=convert, permute=permute, concat=concat, to_cpu=to_cpu)
             return par
 
         except Exception as e: return None
 
 
-    def _convert(self, par, convert=True):
-        if not convert: return par
-        if len(par.shape) > 2: par = self._concat_tensors(par, dim=1)
-        par = np.array(par)
+    def _convert(self, par, convert=False, permute=False, concat=False, to_cpu=False):
+        if par is None: return par
+        par = self._to_cpu(par, move=to_cpu)
+        if isinstance(par, torch.Tensor): 
+            par = par.clone().detach()
+            if permute and len(par.shape) > 2: par = torch.permute(par, (1,0,2))
+        if concat: par = self._concat_tensors(par, dim=1)
+        if convert: par = np.array(par)
         return par
 
 
     def _likelihood_mixture(self, to_cpu=False, params=None):
         alpha = self._to_cpu(self.alpha, move=to_cpu)
         if params is None: params = self.get_param_dict(convert=False, permute=True, 
-                                                        to_cpu=to_cpu)
+                                                        concat=False, to_cpu=to_cpu)
 
+        sf = torch.ones(self.cluster, self.n_variants, self.K) if params["scale_factor_matrix"] is None else params["scale_factor_matrix"]
+        assert sf.shape == (self.cluster, self.n_variants, self.K)
         assert params["alpha_prior"].shape == (self.cluster, self.n_variants, self.K)
         assert alpha.shape == (self.n_samples, self.n_variants, self.K)
-
-        scale_factor_matrix = self._compute_scale_factors(alpha_prior=params["alpha_prior"])
 
         llik = torch.zeros(self.cluster, self.n_samples)
         for g in range(self.cluster):
             lprob_alpha = torch.zeros((self.n_variants, self.n_samples))
             for v in range(self.n_variants):
-                # sf = scale_factor_matrix[g, v]
-                sf = 1000
+                sf_gv = sf[g, v]
+                # sf = 1000
                 alpha_prior_g = params["alpha_prior"][g, v]
-                lprob_alpha[v] = dist.Dirichlet(alpha_prior_g * sf).log_prob(alpha[:,v,:])
+                lprob_alpha[v] = dist.Dirichlet(alpha_prior_g * sf_gv).log_prob(alpha[:,v,:])
 
             assert lprob_alpha.shape == (self.n_variants, self.n_samples)
 
@@ -698,22 +720,23 @@ class PyBasilica_mixture():
             par = self._to_cpu(par, move=True)
             if parname == "pi":
                 param_dict[parname] = par.tolist() if isinstance(par, torch.Tensor) else par
-            elif (parname == "alpha_prior" or parname == "alpha_prior_unn"):
-                param_dict[parname] = pd.DataFrame(np.array(self._concat_tensors(par, dim=1)), index=range(self.n_groups), columns=sigs)
+            elif (parname == "alpha_prior" or parname == "alpha_prior_unn" or parname == "scale_factor_matrix"):
+                param_dict[parname] = pd.DataFrame(par, index=range(self.n_groups), columns=sigs)
             elif parname == "post_probs" and isinstance(par, torch.Tensor):
                 param_dict[parname] = pd.DataFrame(np.array(torch.transpose(par, dim0=1, dim1=0)), index=sample_names , columns=range(self.n_groups))
         return param_dict
 
 
-
     def _set_init_params(self, sigs):
-        # return
         for k, v_tmp in self.init_params.items():
             v = self._to_cpu(v_tmp, move=True)
             if v is None: continue
 
             if k == "alpha_prior":
-                self.init_params[k] = pd.DataFrame(np.array(self._concat_tensors(v, dim=1)), index=range(self.n_groups), columns=sigs)
+                self.init_params[k] = pd.DataFrame(v, index=range(self.n_groups), columns=sigs)
+            elif k == "variances":
+                v = np.expand_dims(np.concatenate(tuple(v), axis=0), axis=0)
+                self.init_params[k] = pd.DataFrame(v, columns=sigs)
             else:
                 self.init_params[k] = np.array(v)
 

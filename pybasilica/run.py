@@ -79,9 +79,10 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
         bestCL.scores = scoresCL
         bestCL.fits = fitsCL
 
-        bestK = merge_k_cl(obj=bestK, obj_mixt=bestCL, store_parameters=store_parameters) if bestK is not None else bestCL
+        bestK = merge_k_cl(obj=bestK, obj_mixt=bestCL, store_parameters=store_parameters, store_fits=store_fits) if bestK is not None else bestCL
 
     if bestK is not None: bestK.convert_to_dataframe(x) if x is not None else bestK.convert_to_dataframe(alpha)
+    if store_fits: convert_fits(bestK)
 
     return bestK
 
@@ -136,15 +137,12 @@ def run_fit(seed_list, kwargs, parname, parlist, score_name, store_fits, cls):
 
         scores[idd_i] = scores_i
         if store_fits: 
-            input_val = kwargs["x"] if "x" in kwargs.keys() else kwargs["alpha"]
-            for k, v in fits_i.items():
-                v.convert_to_dataframe(input_val)
             fits[idd_i] = fits_i
 
     return best_run, scores, fits
 
 
-def merge_k_cl(obj, obj_mixt, store_parameters):
+def merge_k_cl(obj, obj_mixt, store_parameters, store_fits):
     obj.__dict__["fits"] = {"NMF":obj.fits, "CL":obj_mixt.fits}
     obj.__dict__["scores"] = {"NMF":obj.scores, "CL":obj_mixt.scores}
     obj.__dict__["idd"] = obj.idd + ";" + obj_mixt.idd
@@ -160,6 +158,21 @@ def merge_k_cl(obj, obj_mixt, store_parameters):
     obj.init_params = {**obj.init_params, **obj_mixt.init_params}
     obj.hyperparameters = {**obj.hyperparameters, **obj_mixt.hyperparameters}
     return obj
+
+
+def convert_fits(obj):
+    try: _convert_fits_aux(obj.fits, input=obj.x)
+    except: pass
+    try: _convert_fits_aux(obj.fits["NMF"], input=obj.x)
+    except: pass
+    try: _convert_fits_aux(obj.fits["CL"], input=obj.params["alpha"])
+    except: pass
+
+
+def _convert_fits_aux(fits, input):
+    for _, v_1 in fits.items(): 
+        for _, v_2 in v_1.items():
+            v_2.convert_to_dataframe(input)
 
 
 # def select_best(parlist, parname, seed, kwargs, classname, save_all_fits, score):
