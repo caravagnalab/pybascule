@@ -12,7 +12,7 @@ from pyro.infer.autoguide import AutoDelta
 from pyro.ops.indexing import Vindex
 from sklearn.cluster import KMeans
 from sklearn.metrics import calinski_harabasz_score
-from scipy.optimize import minimize_scalar
+from scipy.optimize import minimize_scalar, direct
 from collections import defaultdict
 from copy import deepcopy
 from tqdm import trange
@@ -101,6 +101,8 @@ class PyBasilica_mixture():
         '''
         if not isinstance(alpha, list): alpha = [alpha]
 
+        self.variants_shapes = [i.shape[1] for i in alpha]
+
         alpha_stacked = deepcopy(alpha)
         for i, v in enumerate(alpha_stacked):  # for each alpha matrix
             if isinstance(v, pd.DataFrame):
@@ -140,25 +142,27 @@ class PyBasilica_mixture():
         else:
             pi = pyro.sample("pi", dist.Dirichlet(self.init_params["pi"]))
 
-        sf_centroid = pyro.sample("scale_factor_centroid", dist.Gamma(sf_centroid*2, 2))
         # alpha_prior = V x G x K 
         alpha_centr = torch.permute(self.init_params["alpha_prior"], (1,0,2))
-        with pyro.plate("g1", cluster):
-            with pyro.plate("n_vars1", n_variants):
-                alpha_prior = pyro.sample("alpha_prior", dist.Dirichlet(alpha_centr * sf_centroid))
+        with pyro.plate("g1", cluster, dim=-1):
+            with pyro.plate("n_vars1", n_variants, dim=-2):
+                sf_centroid = pyro.sample("scale_factor_centroid", dist.Gamma(sf_centroid*2, 2))
+                alpha_prior = pyro.sample("alpha_prior", dist.Dirichlet(alpha_centr * sf_centroid.unsqueeze(-1)))
 
         # Try with relaxedOneHotCategorical -> continuous Categorical
         # alpha = N x V x K
         with pyro.plate("n", n_samples):
             z_onehot = pyro.sample("latent_class", dist.RelaxedOneHotCategorical(temperature=torch.tensor(0.1), 
                                                                                 logits=torch.log(pi)))
-            z = z_onehot.argmax(dim=-1).long()  # first find argmax over variant types (dim=-2), then over clusters (dim=-1)
-
-            # # z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":self.enumer})
+            z = z_onehot.argmax(dim=-1).long()
+            
+            # z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":self.enumer})
 
             for v in pyro.plate("n_vars2", n_variants):
-                pyro.sample(f"obs_{v}", dist.Dirichlet(Vindex(alpha_prior * sf_alpha)[v,z,:]), 
-                            obs=self.alpha[:,v,:])
+                # alpha -> V x N x K
+                # alpha_prior -> V x G x K
+                alpha_c = Vindex(alpha_prior * sf_alpha)[v,z,:]
+                pyro.sample(f"obs_{v}", dist.Dirichlet(alpha_c), obs=self.alpha[:,v,:])
 
 
     def guide_mixture(self):
@@ -177,20 +181,18 @@ class PyBasilica_mixture():
             pyro.sample("pi", dist.Delta(pi_param).to_event(1))
 
         sf_centroid_param = pyro.param("sf_centroid_param", init_params["sf_centroid"])
-        pyro.sample("scale_factor_centroid", dist.Delta(sf_centroid_param))
 
         init_alpha = torch.permute(init_params["alpha_prior"], (1,0,2))
         alpha_prior_param = pyro.param("alpha_prior_param", lambda: init_alpha, constraint=constraints.simplex)
         with pyro.plate("g1", cluster):
             with pyro.plate("n_vars1", n_variants):
+                pyro.sample("scale_factor_centroid", dist.Delta(sf_centroid_param))
                 pyro.sample("alpha_prior", dist.Delta(alpha_prior_param).to_event(1))
 
-        # latent_class = pyro.param("latent_class_param", lambda: init_params["latent_class"], 
-        #                           constraint=constraints.simplex)
         with pyro.plate("n", n_samples):
             pyro.sample("latent_class", dist.RelaxedOneHotCategorical(temperature=torch.tensor(0.1), 
                                                                       logits=torch.log(pi_param)))
-            # pyro.sample("latent_class", dist.Delta(latent_class).to_event(1))
+            
             # pyro.sample("latent_class", dist.Categorical(pi_param), infer={"enumerate":self.enumer})
 
 
@@ -322,8 +324,7 @@ class PyBasilica_mixture():
                                                      clusters=clusters)
         
         init_scale_factors = self._compute_scale_factors(alpha_prior=alpha_prior, variances=variances)
-        print(init_scale_factors)
-        sf_centroid = torch.amax(init_scale_factors)
+        sf_centroid = init_scale_factors.repeat(self.cluster, 1).permute((1,0))
 
         return self._set_init_params_dict(alpha_prior=alpha_prior, 
                                           pi=pi.clone().detach().double(), 
@@ -342,8 +343,8 @@ class PyBasilica_mixture():
                 variances[g, v] = torch.var(alpha_v, dim=0)
 
         variances[variances < torch.finfo().tiny] = torch.finfo().tiny
-        # return variances
-        return np.median(variances, axis=0)
+        assert variances.shape == (self.cluster, self.n_variants, self.K)
+        return variances
 
 
     def _compute_scale_factors(self, variances=None, alpha_prior=None, convert=False, to_cpu=False):
@@ -352,22 +353,22 @@ class PyBasilica_mixture():
         if alpha_prior is None:
             alpha_prior = self._get_param("alpha_prior_param", convert=False, permute=True, concat=False, to_cpu=False)
 
-        assert variances.shape == (self.n_variants, self.K)
+        assert variances.shape == (self.cluster, self.n_variants, self.K)
         assert alpha_prior.shape == (self.cluster, self.n_variants, self.K)
 
         sf_vector = torch.zeros(self.cluster, self.n_variants)
         for g in range(self.cluster):
             for v in range(self.n_variants):
-                sf_gv = minimize_scalar(fun=self.variance_condition, bracket=(1,1000), 
-                                        args=(variances[v], alpha_prior[g, v])).x
+                sf_gv = direct(func=self.variance_condition, bounds=([1.,1000.],), 
+                               args=(variances[g, v], alpha_prior[g, v]), maxiter=100).x
                 if isinstance(sf_gv, torch.Tensor): sf_vector[g, v] = sf_gv.clone().detach()
                 else: sf_vector[g, v] = torch.tensor(sf_gv)
 
         # keep the min for each variant
         scale_factors = torch.amax(sf_vector, dim=0)
-        assert scale_factors.shape == (self.n_variants,)
         scale_factors[scale_factors < 1.] = 1.
         scale_factors = self._convert(scale_factors, convert=convert, to_cpu=to_cpu)
+        assert scale_factors.shape == (self.n_variants,)
         return scale_factors
 
 
@@ -409,7 +410,7 @@ class PyBasilica_mixture():
 
     def _set_init_params_dict(self, alpha_prior=None, pi=None, latent_class=None, variances=None, 
                               sf_centroid=None, clusters=None):
-        self.hyperparameters["scale_factor_alpha"] = sf_centroid
+        self.hyperparameters["scale_factor_centroid"] = sf_centroid
         return {"alpha_prior":alpha_prior,
                 "pi":pi,
                 "sf_centroid":sf_centroid,
@@ -474,7 +475,7 @@ class PyBasilica_mixture():
             loss = float(svi.step())
             self.losses.append(loss)
 
-            self.likelihoods.append(self._likelihood_mixture(to_cpu=False).sum())
+            # self.likelihoods.append(self._likelihood_mixture(to_cpu=False).sum())
 
             if self.store_parameters and i%train_params_each==0:
                 self.train_params.append(self.get_param_dict(convert=True, to_cpu=False))
@@ -501,8 +502,7 @@ class PyBasilica_mixture():
         params["alpha_prior"] = self._get_param("alpha_prior_param", convert=convert, 
                                                 permute=permute, concat=concat, to_cpu=to_cpu)
         params["pi"] = self._get_param("pi_param", convert=convert, to_cpu=to_cpu)
-        params["scale_factor_matrix"] = self._compute_scale_factors(convert=convert, permute=permute, 
-                                                                    concat=concat, to_cpu=to_cpu)
+        params["scale_factor_matrix"] = self._compute_scale_factors(convert=convert, to_cpu=to_cpu)
 
         params["scale_factor_centroid"] = self._get_param("sf_centroid_param", convert=convert, to_cpu=to_cpu)
         return params
@@ -550,8 +550,8 @@ class PyBasilica_mixture():
         if params is None: params = self.get_param_dict(convert=False, permute=True, 
                                                         concat=False, to_cpu=to_cpu)
 
-        sf = torch.ones(self.cluster, self.n_variants, self.K) if params["scale_factor_matrix"] is None else params["scale_factor_matrix"]
-        assert sf.shape == (self.cluster, self.n_variants, self.K)
+        sf = torch.ones(self.n_variants) if params["scale_factor_matrix"] is None else params["scale_factor_matrix"]
+        assert sf.shape == (self.n_variants,)
         assert params["alpha_prior"].shape == (self.cluster, self.n_variants, self.K)
         assert alpha.shape == (self.n_samples, self.n_variants, self.K)
 
@@ -559,10 +559,9 @@ class PyBasilica_mixture():
         for g in range(self.cluster):
             lprob_alpha = torch.zeros((self.n_variants, self.n_samples))
             for v in range(self.n_variants):
-                sf_gv = sf[g, v]
-                # sf = 1000
+                sf_v = sf[v]
                 alpha_prior_g = params["alpha_prior"][g, v]
-                lprob_alpha[v] = dist.Dirichlet(alpha_prior_g * sf_gv).log_prob(alpha[:,v,:])
+                lprob_alpha[v] = dist.Dirichlet(alpha_prior_g * sf_v).log_prob(alpha[:,v,:])
 
             assert lprob_alpha.shape == (self.n_variants, self.n_samples)
 
@@ -720,8 +719,10 @@ class PyBasilica_mixture():
             par = self._to_cpu(par, move=True)
             if parname == "pi":
                 param_dict[parname] = par.tolist() if isinstance(par, torch.Tensor) else par
-            elif (parname == "alpha_prior" or parname == "alpha_prior_unn" or parname == "scale_factor_matrix"):
+            elif (parname == "alpha_prior" or parname == "alpha_prior_unn"):
                 param_dict[parname] = pd.DataFrame(par, index=range(self.n_groups), columns=sigs)
+            elif parname == "scale_factor_matrix":
+                param_dict[parname] = np.array(par)
             elif parname == "post_probs" and isinstance(par, torch.Tensor):
                 param_dict[parname] = pd.DataFrame(np.array(torch.transpose(par, dim0=1, dim1=0)), index=sample_names , columns=range(self.n_groups))
         return param_dict
@@ -735,7 +736,6 @@ class PyBasilica_mixture():
             if k == "alpha_prior":
                 self.init_params[k] = pd.DataFrame(v, index=range(self.n_groups), columns=sigs)
             elif k == "variances":
-                v = np.expand_dims(np.concatenate(tuple(v), axis=0), axis=0)
                 self.init_params[k] = pd.DataFrame(v, columns=sigs)
             else:
                 self.init_params[k] = np.array(v)
