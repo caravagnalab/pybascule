@@ -149,7 +149,6 @@ class PyBasilica_mixture():
                 sf_centroid = pyro.sample("scale_factor_centroid", dist.Gamma(sf_centroid*2, 2))
                 alpha_prior = pyro.sample("alpha_prior", dist.Dirichlet(alpha_centr * sf_centroid.unsqueeze(-1)))
 
-        # Try with relaxedOneHotCategorical -> continuous Categorical
         # alpha = N x V x K
         with pyro.plate("n", n_samples):
             z_onehot = pyro.sample("latent_class", dist.RelaxedOneHotCategorical(temperature=torch.tensor(0.1), 
@@ -164,36 +163,43 @@ class PyBasilica_mixture():
                 alpha_c = Vindex(alpha_prior * sf_alpha)[v,z,:]
                 pyro.sample(f"obs_{v}", dist.Dirichlet(alpha_c), obs=self.alpha[:,v,:])
 
-
     def guide_mixture(self):
-        cluster, n_samples, n_variants = self.cluster, self.n_samples, self.n_variants
-        init_params = self._initialize_params()
+        return AutoDelta(poutine.block(self.model_mixture, 
+                                       expose=["beta_pi",
+                                               "scale_factor_centroid",
+                                               "alpha_prior"],
+                                       hide=["latent_class"]))
 
-        init_pi = init_params["pi"]
-        pi_param = pyro.param("pi_param", lambda: init_pi, constraint=constraints.simplex)
-        if self.nonparam:
-            pi_conc0 = pyro.param("pi_conc0_param", lambda: (init_pi[:-1])*10,
-                                  constraint=constraints.greater_than_eq(torch.finfo().tiny))
 
-            with pyro.plate("beta_plate", cluster-1):
-                pyro.sample("beta_pi", dist.Beta(1, pi_conc0))
-        else:
-            pyro.sample("pi", dist.Delta(pi_param).to_event(1))
+    # def guide_mixture(self):
+    #     cluster, n_samples, n_variants = self.cluster, self.n_samples, self.n_variants
+    #     init_params = self._initialize_params()
 
-        sf_centroid_param = pyro.param("sf_centroid_param", init_params["sf_centroid"])
+    #     init_pi = init_params["pi"]
+    #     pi_param = pyro.param("pi_param", lambda: init_pi, constraint=constraints.simplex)
+    #     if self.nonparam:
+    #         pi_conc0 = pyro.param("pi_conc0_param", lambda: (init_pi[:-1])*10,
+    #                               constraint=constraints.greater_than_eq(torch.finfo().tiny))
 
-        init_alpha = torch.permute(init_params["alpha_prior"], (1,0,2))
-        alpha_prior_param = pyro.param("alpha_prior_param", lambda: init_alpha, constraint=constraints.simplex)
-        with pyro.plate("g1", cluster):
-            with pyro.plate("n_vars1", n_variants):
-                pyro.sample("scale_factor_centroid", dist.Delta(sf_centroid_param))
-                pyro.sample("alpha_prior", dist.Delta(alpha_prior_param).to_event(1))
+    #         with pyro.plate("beta_plate", cluster-1):
+    #             pyro.sample("beta_pi", dist.Beta(1, pi_conc0))
+    #     else:
+    #         pyro.sample("pi", dist.Delta(pi_param).to_event(1))
 
-        with pyro.plate("n", n_samples):
-            pyro.sample("latent_class", dist.RelaxedOneHotCategorical(temperature=torch.tensor(0.1), 
-                                                                      logits=torch.log(pi_param)))
+    #     sf_centroid_param = pyro.param("sf_centroid_param", lambda: init_params["sf_centroid"])
+
+    #     init_alpha = torch.permute(init_params["alpha_prior"], (1,0,2))
+    #     alpha_prior_param = pyro.param("alpha_prior_param", lambda: init_alpha, constraint=constraints.simplex)
+    #     with pyro.plate("g1", cluster):
+    #         with pyro.plate("n_vars1", n_variants):
+    #             pyro.sample("scale_factor_centroid", dist.Delta(sf_centroid_param))
+    #             pyro.sample("alpha_prior", dist.Delta(alpha_prior_param).to_event(1))
+
+    #     with pyro.plate("n", n_samples):
+    #         pyro.sample("latent_class", dist.RelaxedOneHotCategorical(temperature=torch.tensor(0.1), 
+    #                                                                   logits=torch.log(pi_param)))
             
-            # pyro.sample("latent_class", dist.Categorical(pi_param), infer={"enumerate":self.enumer})
+    #         # pyro.sample("latent_class", dist.Categorical(pi_param), infer={"enumerate":self.enumer})
 
 
     def _check_kmeans(self, X):
@@ -324,7 +330,7 @@ class PyBasilica_mixture():
                                                      clusters=clusters)
         
         init_scale_factors = self._compute_scale_factors(alpha_prior=alpha_prior, variances=variances)
-        sf_centroid = init_scale_factors.repeat(self.cluster, 1).permute((1,0))
+        sf_centroid = init_scale_factors.repeat(self.cluster, 1).permute((1,0)).double()
 
         return self._set_init_params_dict(alpha_prior=alpha_prior, 
                                           pi=pi.clone().detach().double(), 
@@ -351,12 +357,13 @@ class PyBasilica_mixture():
         if variances is None: variances = self.init_params["variances"]
         if variances is None: return None
         if alpha_prior is None:
-            alpha_prior = self._get_param("alpha_prior_param", convert=False, permute=True, concat=False, to_cpu=False)
+            # alpha_prior = self._get_param("alpha_prior_param", convert=False, permute=True, concat=False, to_cpu=False)
+            alpha_prior = self._get_param("AutoDelta.alpha_prior", convert=False, permute=True, concat=False, to_cpu=False)
 
         assert variances.shape == (self.cluster, self.n_variants, self.K)
         assert alpha_prior.shape == (self.cluster, self.n_variants, self.K)
 
-        sf_vector = torch.zeros(self.cluster, self.n_variants)
+        sf_vector = torch.zeros(self.cluster, self.n_variants).double()
         for g in range(self.cluster):
             for v in range(self.n_variants):
                 sf_gv = direct(func=self.variance_condition, bounds=([1.,1000.],), 
@@ -370,30 +377,6 @@ class PyBasilica_mixture():
         scale_factors = self._convert(scale_factors, convert=convert, to_cpu=to_cpu)
         assert scale_factors.shape == (self.n_variants,)
         return scale_factors
-
-
-    # def _compute_scale_factors(self, alpha_prior=None, variances=None, convert=False, to_cpu=False, permute=False, concat=False):
-    #     if variances is None: variances = self.init_params["variances"]
-    #     if variances is None: return None
-        
-    #     if alpha_prior is None:
-    #         alpha_prior = self._get_param("alpha_prior_param", convert=False, 
-    #                                       permute=True, concat=False, to_cpu=False)
-
-    #     assert alpha_prior.shape == (self.cluster, self.n_variants, self.K)
-    #     assert variances.shape == (self.n_variants, self.K)
-
-    #     scale_factors = torch.zeros(self.n_variants, self.cluster, self.K)
-    #     for g in range(self.cluster):
-    #         for v in range(self.n_variants):
-    #             for k in range(self.K):
-    #                 scale_factors[v, g, k] = self._solver(target=variances[v,k], 
-    #                                                       alpha_k=alpha_prior[g,v,k],
-    #                                                       alpha_hat=torch.sum(alpha_prior[g,v]))
-
-    #     scale_factors[scale_factors < 1.] = 1.
-    #     scale_factors = self._convert(scale_factors, convert=convert, permute=permute, concat=concat, to_cpu=to_cpu)
-    #     return scale_factors
 
 
     def variance_condition(self, sf, target, alpha):
@@ -460,7 +443,7 @@ class PyBasilica_mixture():
         optimizer = pyro.optim.Adam({"lr": self.lr})
         self._curr_step = 0
 
-        svi = SVI(self.model_mixture, self.guide_mixture, optimizer, loss=elbo)
+        svi = SVI(self.model_mixture, self.guide_mixture(), optimizer, loss=elbo)
         loss = float(svi.step())
 
         train_params_each = 2 if self.n_steps <= 100 else int(self.n_steps / 100)
@@ -499,12 +482,24 @@ class PyBasilica_mixture():
 
     def get_param_dict(self, convert=False, permute=False, to_cpu=True, concat=False):
         params = dict()
-        params["alpha_prior"] = self._get_param("alpha_prior_param", convert=convert, 
+        # params["alpha_prior"] = self._get_param("alpha_prior_param", convert=convert, 
+        #                                         permute=permute, concat=concat, to_cpu=to_cpu)
+        # params["pi"] = self._get_param("pi_param", convert=convert, to_cpu=to_cpu)
+        # params["scale_factor_matrix"] = self._compute_scale_factors(convert=convert, to_cpu=to_cpu)
+
+        # params["scale_factor_centroid"] = self._get_param("sf_centroid_param", convert=convert, to_cpu=to_cpu)
+        
+        params["alpha_prior"] = self._get_param("AutoDelta.alpha_prior", convert=convert, 
                                                 permute=permute, concat=concat, to_cpu=to_cpu)
-        params["pi"] = self._get_param("pi_param", convert=convert, to_cpu=to_cpu)
+        
+        beta_pi = self._get_param("AutoDelta.beta_pi", convert=False, to_cpu=to_cpu)
+        params["pi"] = self._mix_weights(beta_pi)
+        if convert: params["pi"] = params["pi"].numpy()
         params["scale_factor_matrix"] = self._compute_scale_factors(convert=convert, to_cpu=to_cpu)
 
-        params["scale_factor_centroid"] = self._get_param("sf_centroid_param", convert=convert, to_cpu=to_cpu)
+        params["scale_factor_centroid"] = self._get_param("AutoDelta.sf_centroid", convert=convert, to_cpu=to_cpu)
+
+        
         return params
 
 
