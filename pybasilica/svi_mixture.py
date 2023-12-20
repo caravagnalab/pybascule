@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from pyro.infer import SVI, TraceEnum_ELBO, Trace_ELBO, config_enumerate
-from pyro.infer.autoguide import AutoDelta
+from pyro.infer.autoguide import AutoDelta, init_to_sample
 from pyro.ops.indexing import Vindex
 from sklearn.cluster import KMeans
 from sklearn.metrics import calinski_harabasz_score
@@ -38,7 +38,8 @@ class PyBasilica_mixture():
         ):
 
         self._hyperpars_default = {"pi_conc0":0.6, "scale_factor_alpha":1,
-                                   "scale_factor_centroid":1, "scale_tau":0}
+                                   "scale_factor_centroid":1, "scale_tau":0,
+                                   "alpha_thr":0.01}
         self._set_data_catalogue(alpha)
         self._set_fit_settings(lr=lr, optim_gamma=optim_gamma, n_steps=n_steps, \
                                compile_model=compile_model, CUDA=CUDA, store_parameters=store_parameters,
@@ -154,7 +155,7 @@ class PyBasilica_mixture():
             z_onehot = pyro.sample("latent_class", dist.RelaxedOneHotCategorical(temperature=torch.tensor(0.1), 
                                                                                 logits=torch.log(pi)))
             z = z_onehot.argmax(dim=-1).long()
-            
+
             # z = pyro.sample("latent_class", dist.Categorical(pi), infer={"enumerate":self.enumer})
 
             for v in pyro.plate("n_vars2", n_variants):
@@ -163,12 +164,22 @@ class PyBasilica_mixture():
                 alpha_c = Vindex(alpha_prior * sf_alpha)[v,z,:]
                 pyro.sample(f"obs_{v}", dist.Dirichlet(alpha_c), obs=self.alpha[:,v,:])
 
+
     def guide_mixture(self):
+        self._initialize_params()
         return AutoDelta(poutine.block(self.model_mixture, 
                                        expose=["beta_pi",
                                                "scale_factor_centroid",
-                                               "alpha_prior"],
-                                       hide=["latent_class"]))
+                                               "alpha_prior",
+                                               "latent_class"]), 
+                        init_loc_fn=self.init_fn)
+
+
+    def init_fn(self, site):
+        site_name = site["name"]
+        if site_name == "alpha_prior": 
+            return torch.permute(self.init_params["alpha_prior"], (1,0,2))
+        return self.init_params[site_name]
 
 
     # def guide_mixture(self):
@@ -186,7 +197,7 @@ class PyBasilica_mixture():
     #     else:
     #         pyro.sample("pi", dist.Delta(pi_param).to_event(1))
 
-    #     sf_centroid_param = pyro.param("sf_centroid_param", lambda: init_params["sf_centroid"])
+    #     sf_centroid_param = pyro.param("sf_centroid_param", lambda: init_params["scale_factor_centroid"])
 
     #     init_alpha = torch.permute(init_params["alpha_prior"], (1,0,2))
     #     alpha_prior_param = pyro.param("alpha_prior_param", lambda: init_alpha, constraint=constraints.simplex)
@@ -328,7 +339,7 @@ class PyBasilica_mixture():
 
         variances = self._compute_empirical_variance(alpha=self.alpha, 
                                                      clusters=clusters)
-        
+
         init_scale_factors = self._compute_scale_factors(alpha_prior=alpha_prior, variances=variances)
         sf_centroid = init_scale_factors.repeat(self.cluster, 1).permute((1,0)).double()
 
@@ -396,7 +407,8 @@ class PyBasilica_mixture():
         self.hyperparameters["scale_factor_centroid"] = sf_centroid
         return {"alpha_prior":alpha_prior,
                 "pi":pi,
-                "sf_centroid":sf_centroid,
+                "beta_pi":pi[:-1],
+                "scale_factor_centroid":sf_centroid,
                 "latent_class":latent_class,
                 "variances":variances,
                 "init_clusters":clusters}
@@ -550,15 +562,23 @@ class PyBasilica_mixture():
         assert params["alpha_prior"].shape == (self.cluster, self.n_variants, self.K)
         assert alpha.shape == (self.n_samples, self.n_variants, self.K)
 
+        thr = self.hyperparameters["alpha_thr"]
+
         llik = torch.zeros(self.cluster, self.n_samples)
         for g in range(self.cluster):
             lprob_alpha = torch.zeros((self.n_variants, self.n_samples))
             for v in range(self.n_variants):
                 sf_v = sf[v]
                 alpha_prior_g = params["alpha_prior"][g, v]
-                lprob_alpha[v] = dist.Dirichlet(alpha_prior_g * sf_v).log_prob(alpha[:,v,:])
 
-            assert lprob_alpha.shape == (self.n_variants, self.n_samples)
+                assert lprob_alpha.shape == (self.n_variants, self.n_samples)
+
+                for n in range(self.n_samples):
+                    idxs_keep = (alpha[n,v,:] > thr).nonzero().squeeze()
+                    alpha_n = self._norm_and_clamp(alpha[n,v,idxs_keep])
+                    alpha_c = self._norm_and_clamp(alpha_prior_g[idxs_keep]) * sf_v
+
+                    lprob_alpha[v,n] = dist.Dirichlet(alpha_c).log_prob(alpha_n)
 
             # sum over independent variants and add log(pi)
             llik[g, :] = torch.sum(lprob_alpha, dim=0) + torch.log(params["pi"][g])
