@@ -15,7 +15,7 @@ from pybasilica.svi_mixture import PyBasilica_mixture
 
 
 def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1, n_steps = 500, enumer = "parallel", 
-        cluster = None, beta_fixed = None, hyperparameters = None, dirichlet_prior = True, 
+        cluster = None, beta_fixed = None, hyperparameters = None, dirichlet_prior = True, autoguide = False,
         compile_model = False, CUDA = False, nonparametric = False, stage = "",  seed_list = [10], 
         store_parameters = False, store_fits=False):
 
@@ -54,6 +54,7 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
         "n_steps":n_steps,
         "enumer":enumer,
         "hyperparameters":hyperparameters,
+        "autoguide":autoguide,
         "compile_model":compile_model,
         "CUDA":CUDA,
         "store_parameters":store_parameters,
@@ -162,6 +163,8 @@ def merge_k_cl(obj, obj_mixt, store_parameters, store_fits):
 
 def convert_fits(obj):
     try: _convert_fits_aux(obj.fits, input=obj.x)
+    except: pass
+    try: _convert_fits_aux(obj.fits, input=obj.alpha)
     except: pass
     try: _convert_fits_aux(obj.fits["NMF"], input=obj.x)
     except: pass
