@@ -7,16 +7,16 @@ import torch.nn.functional as F
 import numpy as np
 import pandas as pd
 
-from pyro.infer import SVI, TraceEnum_ELBO, Trace_ELBO
+from pyro.infer import SVI, Trace_ELBO
 from pyro.infer.autoguide import AutoDelta
 from pyro.ops.indexing import Vindex
 from sklearn.cluster import KMeans
-from sklearn.metrics import calinski_harabasz_score
-from scipy.optimize import minimize_scalar, direct
+from scipy.optimize import direct
 from collections import defaultdict
 from copy import deepcopy
 from tqdm import trange
 
+MIN_POS_N = torch.finfo(torch.float32).tiny
 
 class PyBasilica_mixture():
     def __init__(
@@ -92,7 +92,7 @@ class PyBasilica_mixture():
         for i, v in enumerate(param):
             if v.shape[-1] < max_shape:
                 pad_dims = max_shape - v.shape[-1]
-                v = F.pad(input=v, pad=(0, pad_dims, 0, 0), mode="constant", value=torch.finfo().tiny)
+                v = F.pad(input=v, pad=(0, pad_dims, 0, 0), mode="constant", value=MIN_POS_N)
                 param[i] = self._norm_and_clamp(v)
         return param
 
@@ -192,13 +192,12 @@ class PyBasilica_mixture():
             cluster, n_samples, n_variants = self.cluster, self.n_samples, self.n_variants
             init_params = self._initialize_params()
             z_tau = torch.tensor(self.hyperparameters["z_tau"]).double()
-
             init_pi = init_params["pi"]
-            
+
             if self.nonparam:
                 pi_param = pyro.param("pi_param", lambda: init_pi, constraint=constraints.simplex)
                 pi_conc0 = pyro.param("pi_conc0_param", lambda: (init_pi[:-1])*10,
-                                    constraint=constraints.greater_than_eq(torch.finfo().tiny))
+                                    constraint=constraints.greater_than_eq(MIN_POS_N))
                 with pyro.plate("beta_plate", cluster-1):
                     pyro.sample("beta_pi", dist.Beta(1, pi_conc0))
             else:
@@ -300,7 +299,7 @@ class PyBasilica_mixture():
         last, alpha_prior = 0, list()
         for _ in range(self.n_variants):
             alpha_p_tmp = dist.Dirichlet(alpha_prior_km[:, last:(last + self.K)]).sample()
-            alpha_p_tmp[alpha_p_tmp < torch.finfo().tiny] = torch.finfo().tiny
+            alpha_p_tmp[alpha_p_tmp < MIN_POS_N] = MIN_POS_N
             alpha_p_tmp = self._norm_and_clamp(alpha_p_tmp)
 
             alpha_prior.append(alpha_p_tmp)
@@ -308,7 +307,7 @@ class PyBasilica_mixture():
 
         latent_class_km = dist.RelaxedOneHotCategorical(temperature=torch.tensor(0.1), 
                                                         logits=torch.log(pi_km)).sample((self.n_samples,))
-        latent_class_km[latent_class_km < torch.finfo().tiny] = torch.finfo().tiny
+        latent_class_km[latent_class_km < MIN_POS_N] = MIN_POS_N
 
         latent_class =  self._to_gpu(latent_class_km, move=True)
         pi = self._to_gpu(pi_km, move=True)
@@ -338,7 +337,7 @@ class PyBasilica_mixture():
                     alpha_v = alpha_g[:,v,:]
                     variances[g, v] = torch.var(alpha_v, dim=0)
 
-        variances[variances < torch.finfo().tiny] = torch.finfo().tiny
+        variances[variances < MIN_POS_N] = MIN_POS_N
         assert variances.shape == (self.cluster, self.n_variants, self.K)
         return variances
 
@@ -396,7 +395,7 @@ class PyBasilica_mixture():
         alpha_prior = dist.Dirichlet(torch.ones(self.cluster, self.n_variants, self.K, dtype=torch.float64)).sample()
         latent_class = dist.RelaxedOneHotCategorical(temperature=torch.tensor(0.1), 
                                                                    logits=torch.log(pi)).sample((self.n_samples,))
-        latent_class[latent_class < torch.finfo().tiny] = torch.finfo().tiny
+        latent_class[latent_class < MIN_POS_N] = MIN_POS_N
         sf_centroid = torch.tensor(self.hyperparameters["scale_factor_centroid"]).double()
 
         return self._set_init_params_dict(alpha_prior=alpha_prior, pi=pi, 
@@ -444,7 +443,7 @@ class PyBasilica_mixture():
             loss = float(svi.step())
             self.losses.append(loss)
 
-            self.likelihoods.append(self._likelihood_mixture(to_cpu=False).sum())
+            # self.likelihoods.append(self._likelihood_mixture(to_cpu=False).sum())
 
             if self.store_parameters and i%train_params_each==0:
                 self.train_params.append(self.get_param_dict(convert=True, to_cpu=False))
@@ -671,7 +670,7 @@ class PyBasilica_mixture():
                 pad_dims = max_shape - par_i.shape[1]
                 columns = list(str(i)+"_"+par_i.columns) + [str(i)+"_P"+str(j) for j in range(pad_dims)]
                 index = par_i.index
-                values = F.pad(input=self._to_cpu(torch.tensor(par_i.values)), pad=(0, pad_dims, 0,0), mode="constant", value=torch.finfo().tiny)
+                values = F.pad(input=self._to_cpu(torch.tensor(par_i.values)), pad=(0, pad_dims, 0,0), mode="constant", value=MIN_POS_N)
                 new_param.append(pd.DataFrame(values.numpy(), index=index, columns=columns))
             else:
                 new_param.append(par_i.copy(deep=True))

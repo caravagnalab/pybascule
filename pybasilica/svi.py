@@ -9,6 +9,8 @@ from pyro.infer import SVI, Trace_ELBO, JitTrace_ELBO
 from collections import defaultdict
 from tqdm import trange
 
+MIN_POS_N = torch.finfo(torch.float32).tiny
+
 class PyBasilica():
 
     def __init__(
@@ -227,7 +229,7 @@ class PyBasilica():
 
         # Epsilon 
         if self.stage == "random_noise":
-            eps_sigma = pyro.param("lambda_epsilon", init_params["epsilon_var"], constraint=constraints.greater_than(torch.finfo().tiny))
+            eps_sigma = pyro.param("lambda_epsilon", init_params["epsilon_var"], constraint=constraints.greater_than(MIN_POS_N))
 
             with pyro.plate("contexts3", self.contexts):
                 with pyro.plate("n3", n_samples):
