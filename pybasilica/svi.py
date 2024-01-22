@@ -116,7 +116,7 @@ class PyBasilica():
 
     def _set_beta_fixed(self, beta_fixed):
         if beta_fixed is None:
-            self.beta_fixed, self.k_fixed = None, 0
+            self.beta_fixed, self.k_fixed, self.fixed_names = None, 0, []
             return
 
         self.alpha_conc = None
@@ -315,7 +315,9 @@ class PyBasilica():
 
 
     def _compute_cum_beta_fixed(self, beta_fixed):
-        return torch.sum(beta_fixed, dim=0)
+        if self.beta_fixed is not None:
+            return torch.sum(beta_fixed, dim=0)
+        return dist.Dirichlet(torch.ones(self.contexts).double()).sample()
 
 
     def _get_alpha_stick_breaking(self, alpha_star, beta_weights, convert=False):
