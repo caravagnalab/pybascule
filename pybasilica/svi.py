@@ -9,10 +9,11 @@ from pyro.infer import SVI, Trace_ELBO, JitTrace_ELBO
 from collections import defaultdict
 from tqdm import trange
 
+
 MIN_POS_N = torch.finfo(torch.float32).tiny
 
-class PyBasilica():
 
+class PyBasilica():
     def __init__(
         self,
         x,
@@ -45,7 +46,6 @@ class PyBasilica():
         self._set_beta_fixed(beta_fixed)  # set self.beta_fixed and self.k_fixed
         self._fix_zero_denovo_null_reference()
         self.K = self.k_denovo + self.k_fixed
-        # self.K_alpha = self.k_denovo if (not self._noise_only and self.k_denovo > 0) else self.K
         self.K_alpha = self.K
 
         self._set_hyperparams(enumer=enumer, hyperparameters=hyperparameters)
@@ -134,7 +134,6 @@ class PyBasilica():
         self.k_fixed = beta_fixed.shape[0]
         if self.k_fixed > 0: self._fix_zero_contexts()
 
-
     def _fix_zero_contexts(self):
         '''
         If a context has a density of 0 in all signatures but X contains mutations in that context, an error will raise.
@@ -163,7 +162,6 @@ class PyBasilica():
         k_denovo, k_fixed = self.k_denovo, self.k_fixed
 
         if self._noise_only: alpha = self._to_gpu(torch.zeros(self.n_samples, 1, dtype=torch.float64))
-
         # Flat model
         if not self._noise_only:
             with pyro.plate("n", self.n_samples):
@@ -268,7 +266,6 @@ class PyBasilica():
         if self.k_denovo > 0:
             beta_conc = self._get_beta_centroid(eps=1e-3, power=1)
             beta_dn = dist.Dirichlet(beta_conc).sample((self.k_denovo,))
-
             omega_conc = self.hyperparameters["omega_conc"][0]
             # beta_weights = dist.Dirichlet(omega_conc).sample((self.k_denovo,))
 
