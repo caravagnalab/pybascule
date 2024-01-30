@@ -14,10 +14,10 @@ from pybasilica.svi import PyBasilica
 from pybasilica.svi_mixture import PyBasilica_mixture
 
 
-def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1, n_steps = 3000, enumer = "parallel", cluster = None, beta_fixed = None, 
-        hyperparameters = None, dirichlet_prior = True, compile_model = False, CUDA = False, enforce_sparsity = True, nonparametric = False, 
-        regularizer = "cosine", reg_weight = 0., regul_compare = None, regul_denovo = True, regul_fixed = True, stage = "", 
-        seed_list = [10], store_parameters = False, store_fits=False):
+def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1, n_steps = 500, enumer = "parallel", 
+        cluster = None, beta_fixed = None, hyperparameters = None, dirichlet_prior = True, autoguide = False,
+        compile_model = False, CUDA = False, nonparametric = False, stage = "",  seed_list = [10], 
+        store_parameters = False, store_fits=False):
 
     if isinstance(seed_list, int): seed_list = [seed_list]
     if isinstance(cluster, int) and cluster < 1: cluster = None
@@ -28,7 +28,7 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
 
     kwargs = {
         "x":x,
-        "cluster":None,
+        # "cluster":None,
         "lr":lr,
         "optim_gamma":optim_gamma,
         "n_steps":n_steps,
@@ -38,14 +38,14 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
         "hyperparameters":hyperparameters,
         "compile_model":compile_model,
         "CUDA":CUDA,
-        "enforce_sparsity":enforce_sparsity,
-        "regularizer":regularizer,
-        "reg_weight":reg_weight,
+        # "enforce_sparsity":enforce_sparsity,
+        # "regularizer":regularizer,
+        # "reg_weight":reg_weight,
         "store_parameters":store_parameters,
         "stage":stage,
-        "regul_compare":regul_compare,
-        "regul_denovo":regul_denovo,
-        "regul_fixed":regul_fixed
+        # "regul_compare":regul_compare,
+        # "regul_denovo":regul_denovo,
+        # "regul_fixed":regul_fixed
         }
 
     kwargs_mixture = {
@@ -54,6 +54,7 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
         "n_steps":n_steps,
         "enumer":enumer,
         "hyperparameters":hyperparameters,
+        "autoguide":autoguide,
         "compile_model":compile_model,
         "CUDA":CUDA,
         "store_parameters":store_parameters,
@@ -79,20 +80,10 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
         bestCL.scores = scoresCL
         bestCL.fits = fitsCL
 
-        bestK = merge_k_cl(obj=bestK, obj_mixt=bestCL, store_parameters=store_parameters) if bestK is not None else bestCL
-
-        # if len(fitsK) > 0: fits_alpha = {idd_k : v.params["alpha"] for idd_k, v in fitsK.items()}
-        # if len(fits_alpha) > 0:
-        #     fitsCL, scoresCL = dict(), dict()
-        #     for idd_k, alpha_k in fitsK.items():
-        #         kwargs_mixture["alpha"] = alpha_k
-        #         bestCL_i, scoresCL_i, fitsCL_i = run_fit(seed_list=seed_list, kwargs=kwargs_mixture, parname="cluster",
-        #                                                  parlist=list(cluster), score_name="icl", store_fits=store_fits,
-        #                                                  cls=PyBasilica_mixture)
-
-        #         best_i = merge_k_cl(obj=fitsK[idd_k], obj_mixt=bestCL_i, store_parameters=store_parameters) # if best_k is not None else best_cl
+        bestK = merge_k_cl(obj=bestK, obj_mixt=bestCL, store_parameters=store_parameters, store_fits=store_fits) if bestK is not None else bestCL
 
     if bestK is not None: bestK.convert_to_dataframe(x) if x is not None else bestK.convert_to_dataframe(alpha)
+    if store_fits: convert_fits(bestK)
 
     return bestK
 
@@ -113,7 +104,7 @@ def single_run(seed_list, kwargs, cls, score_name, idd):
             best_score = sc_s
             best_run = deepcopy(obj)
 
-        scores[idd_s] = {"bic":obj.bic, "aic":obj.aic, "icl":obj.icl, "llik":obj.likelihood, "reg_llik":obj.reg_likelihood}
+        scores[idd_s] = {"bic":obj.bic, "aic":obj.aic, "icl":obj.icl, "llik":obj.likelihood}
         fits[idd_s] = obj
 
     return best_run, scores, fits
@@ -146,12 +137,13 @@ def run_fit(seed_list, kwargs, parname, parlist, score_name, store_fits, cls):
             best_idd = idd_i
 
         scores[idd_i] = scores_i
-        if store_fits: fits[idd_i] = fits_i
+        if store_fits: 
+            fits[idd_i] = fits_i
 
     return best_run, scores, fits
 
 
-def merge_k_cl(obj, obj_mixt, store_parameters):
+def merge_k_cl(obj, obj_mixt, store_parameters, store_fits):
     obj.__dict__["fits"] = {"NMF":obj.fits, "CL":obj_mixt.fits}
     obj.__dict__["scores"] = {"NMF":obj.scores, "CL":obj_mixt.scores}
     obj.__dict__["idd"] = obj.idd + ";" + obj_mixt.idd
@@ -167,6 +159,23 @@ def merge_k_cl(obj, obj_mixt, store_parameters):
     obj.init_params = {**obj.init_params, **obj_mixt.init_params}
     obj.hyperparameters = {**obj.hyperparameters, **obj_mixt.hyperparameters}
     return obj
+
+
+def convert_fits(obj):
+    try: _convert_fits_aux(obj.fits, input=obj.x)
+    except: pass
+    try: _convert_fits_aux(obj.fits, input=obj.alpha)
+    except: pass
+    try: _convert_fits_aux(obj.fits["NMF"], input=obj.x)
+    except: pass
+    try: _convert_fits_aux(obj.fits["CL"], input=obj.params["alpha"])
+    except: pass
+
+
+def _convert_fits_aux(fits, input):
+    for _, v_1 in fits.items(): 
+        for _, v_2 in v_1.items():
+            v_2.convert_to_dataframe(input)
 
 
 # def select_best(parlist, parname, seed, kwargs, classname, save_all_fits, score):

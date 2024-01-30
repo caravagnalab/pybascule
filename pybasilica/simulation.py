@@ -27,7 +27,7 @@ def generate_model(alpha_prior, beta, n_muts, N, alpha_sigma=0.05, seed=15, use_
     if isinstance(beta, pd.DataFrame):
         beta = torch.tensor(beta.values)
     alpha_prior = torch.tensor(alpha_prior, dtype=torch.float64)
-    beta = torch.tensor(beta, dtype=torch.float64)
+    beta = beta.clone().detach().double()
     n_muts = torch.tensor(n_muts, dtype=torch.float64)
 
     pyro.set_rng_seed(seed)
