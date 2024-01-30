@@ -205,6 +205,19 @@ class PyBasilica():
             pyro.factor("penalty", penalty)
 
 
+    def _get_beta_centroid(self, eps=1e-10, power=2):
+        beta_fixed_cum = self._compute_cum_beta_fixed(self.beta_fixed)
+        max_val = beta_fixed_cum.max()
+        centroid = (max_val - beta_fixed_cum + eps) ** power
+        return centroid * 100
+
+
+    def _compute_cum_beta_fixed(self, beta_fixed):
+        if self.beta_fixed is not None:
+            return torch.sum(beta_fixed, dim=0)
+        return dist.Dirichlet(torch.ones(self.contexts).double()).sample()
+
+
     def _compute_penalty(self, alpha, beta_fixed_cum, beta_denovo):
         alpha_fixed = torch.sum(alpha[:,:self.k_fixed], dim=0).unsqueeze(1)
         alpha_denovo = torch.sum(alpha[:,self.k_fixed:], dim=0).unsqueeze(1)
@@ -240,13 +253,6 @@ class PyBasilica():
             beta_param = pyro.param("beta_denovo", lambda: init_params["beta_dn_param"], constraint=constraints.simplex)
             with pyro.plate("k_denovo", k_denovo):
                 pyro.sample("latent_signatures", dist.Delta(beta_param).to_event(1))
-
-
-    def _get_beta_centroid(self, eps=1e-10, power=2):
-        beta_fixed_cum = self._compute_cum_beta_fixed(self.beta_fixed)
-        max_val = beta_fixed_cum.max()
-        centroid = (max_val - beta_fixed_cum + eps) ** power
-        return centroid * 100
 
 
     def _initialize_params_nonhier(self):
@@ -312,12 +318,6 @@ class PyBasilica():
 
         if not convert: return beta
         return np.array(beta)
-
-
-    def _compute_cum_beta_fixed(self, beta_fixed):
-        if self.beta_fixed is not None:
-            return torch.sum(beta_fixed, dim=0)
-        return dist.Dirichlet(torch.ones(self.contexts).double()).sample()
 
 
     def _get_alpha_stick_breaking(self, alpha_star, beta_weights, convert=False):
