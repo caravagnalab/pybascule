@@ -82,11 +82,31 @@ class PyBasilica():
         self.hyperparameters["omega_conc"] = torch.cat((torch.ones(self.k_denovo, self.k_fixed) * self.hyperparameters["omega_conc"], 
                                                         torch.ones(self.k_denovo, 1)), dim=1)
 
-        if self.K_alpha == self.K:
-            self.hyperparameters["alpha_conc"] = torch.cat((self._hyperpars_default["alpha_conc"] * torch.ones(self.k_fixed, dtype=torch.float64),
-                                                            torch.ones(self.k_denovo, dtype=torch.float64)))
+        alpha_conc = self.hyperparameters["alpha_conc"]
+        print("K_fixed", self.k_fixed)
+        if self.k_fixed > 0:
+            if (isinstance(alpha_conc, list)):
+                print(alpha_conc)
+                if len(alpha_conc) != self.k_fixed:
+                    raise "The length of `alpha_conc` list must be the same as the number of fixed signatures."
+                
+                print("case 1")
+                self.hyperparameters["alpha_conc"] = torch.cat((torch.tensor(alpha_conc, dtype=torch.float64), 
+                                                                torch.ones(self.k_denovo, dtype=torch.float64)))
+
+            elif isinstance(alpha_conc, int) or isinstance(alpha_conc, float):
+                print("case 2")
+                ## if given as input, the fixed signatures will have a user-defined concentration
+                self.hyperparameters["alpha_conc"] = torch.cat((alpha_conc * torch.ones(self.k_fixed, dtype=torch.float64),
+                                                                torch.ones(self.k_denovo, dtype=torch.float64)))
+            else:
+                raise "`alpha_conc` must be either a list or a number."
+        
         else:
+            print("case 3")
             self.hyperparameters["alpha_conc"] = self._hyperpars_default["alpha_conc"] * torch.ones(self.k_denovo, dtype=torch.float64)
+
+        print(self.hyperparameters["alpha_conc"])
 
         for k, v in self.hyperparameters.items():
             self.hyperparameters[k] = self._to_gpu(v)
@@ -159,7 +179,6 @@ class PyBasilica():
 
     def model(self):
         n_samples, n_contexts = self.n_samples, self.contexts
-        k_denovo, k_fixed = self.k_denovo, self.k_fixed
 
         if self._noise_only: alpha = self._to_gpu(torch.zeros(self.n_samples, 1, dtype=torch.float64))
         # Flat model
@@ -557,8 +576,10 @@ class PyBasilica():
         fixed_names = self.fixed_names
         denovo_names = ["D"+str(d+1) for d in range(self.k_denovo)] if self.k_denovo>0 else []
 
-        if self.K_alpha == self.k_denovo: alpha_columns = denovo_names
-        else: alpha_columns = fixed_names + denovo_names
+        alpha_columns = fixed_names + denovo_names
+
+        # if self.K_alpha == self.k_denovo: alpha_columns = denovo_names
+        # else: alpha_columns = fixed_names + denovo_names
 
         if self.beta_fixed is not None and isinstance(self.beta_fixed, torch.Tensor) and torch.sum(self.beta_fixed) > 0:
             self.beta_fixed = pd.DataFrame(self.beta_fixed, index=fixed_names, columns=contexts)
@@ -583,7 +604,7 @@ class PyBasilica():
         self._set_init_params(sample_names=sample_names, fixed_names=fixed_names, 
                               denovo_names=denovo_names, contexts=contexts, 
                               alpha_columns=alpha_columns)
-        
+
 
     def _convert_pars(self, param_dict, sample_names, fixed_names, denovo_names, contexts):
         for parname, par in param_dict.items():
