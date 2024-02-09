@@ -534,7 +534,8 @@ class PyBasilica_mixture():
         alpha = self._to_cpu(params.get("alpha", self.alpha.clone()), move=to_cpu)
         alpha_prior = params["alpha_prior"]
 
-        sf = torch.ones(self.n_variants) if params["scale_factor_centroid"] is None else params["scale_factor_centroid"]
+        sf = torch.ones(self.n_variants, self.cluster) if params["scale_factor_centroid"] is None else params["scale_factor_centroid"]
+        print(sf)
         assert sf.shape == (self.n_variants, self.cluster)
         assert alpha_prior.shape == (self.cluster, self.n_variants, self.K)
         assert alpha.shape == (self.n_samples, self.n_variants, self.K)
