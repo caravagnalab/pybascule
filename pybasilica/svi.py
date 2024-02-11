@@ -83,19 +83,15 @@ class PyBasilica():
                                                         torch.ones(self.k_denovo, 1)), dim=1)
 
         alpha_conc = self.hyperparameters["alpha_conc"]
-        print("K_fixed", self.k_fixed)
         if self.k_fixed > 0:
             if (isinstance(alpha_conc, list)):
-                print(alpha_conc)
                 if len(alpha_conc) != self.k_fixed:
                     raise "The length of `alpha_conc` list must be the same as the number of fixed signatures."
                 
-                print("case 1")
                 self.hyperparameters["alpha_conc"] = torch.cat((torch.tensor(alpha_conc, dtype=torch.float64), 
                                                                 torch.ones(self.k_denovo, dtype=torch.float64)))
 
             elif isinstance(alpha_conc, int) or isinstance(alpha_conc, float):
-                print("case 2")
                 ## if given as input, the fixed signatures will have a user-defined concentration
                 self.hyperparameters["alpha_conc"] = torch.cat((alpha_conc * torch.ones(self.k_fixed, dtype=torch.float64),
                                                                 torch.ones(self.k_denovo, dtype=torch.float64)))
@@ -103,10 +99,7 @@ class PyBasilica():
                 raise "`alpha_conc` must be either a list or a number."
         
         else:
-            print("case 3")
             self.hyperparameters["alpha_conc"] = self._hyperpars_default["alpha_conc"] * torch.ones(self.k_denovo, dtype=torch.float64)
-
-        print(self.hyperparameters["alpha_conc"])
 
         for k, v in self.hyperparameters.items():
             self.hyperparameters[k] = self._to_gpu(v)

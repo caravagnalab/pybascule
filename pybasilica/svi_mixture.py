@@ -42,8 +42,10 @@ class PyBasilica_mixture():
                                    "z_tau":0.1,
                                    "scale_factor_centroid":1, 
                                    "alpha_thr":0.01}
+        
         self.autoguide = autoguide
         self._set_data_catalogue(alpha)
+
         self._set_fit_settings(lr=lr, optim_gamma=optim_gamma, n_steps=n_steps, \
                                compile_model=compile_model, CUDA=CUDA, store_parameters=store_parameters,
                                seed=seed, nonparam=nonparam)
@@ -396,7 +398,7 @@ class PyBasilica_mixture():
         latent_class = dist.RelaxedOneHotCategorical(temperature=torch.tensor(0.1), 
                                                                    logits=torch.log(pi)).sample((self.n_samples,))
         latent_class[latent_class < MIN_POS_N] = MIN_POS_N
-        sf_centroid = torch.tensor(self.hyperparameters["scale_factor_centroid"]).double()
+        sf_centroid = torch.ones(self.n_variants, self.cluster) * self.hyperparameters["scale_factor_centroid"]
 
         return self._set_init_params_dict(alpha_prior=alpha_prior, pi=pi, 
                                           sf_centroid=sf_centroid, latent_class=latent_class)
@@ -404,7 +406,7 @@ class PyBasilica_mixture():
 
     def _initialize_params(self):
         if self.init_params is None:
-            if self._check_kmeans(torch.cat(tuple(self.alpha.clone()), dim=1)) and self.cluster > 1:
+            if self._check_kmeans(torch.cat(tuple(self.alpha.clone()), dim=0)) and self.cluster > 1:
                 self.init_params = self._initialize_params_clustering()
             else:
                 self.init_params = self._initialize_params_random()
@@ -478,6 +480,7 @@ class PyBasilica_mixture():
             else:
                 params["pi"] = self._get_param("AutoDelta.pi", convert=convert, to_cpu=to_cpu)
             params["z_tau"] = self._get_param("AutoDelta.z_tau", convert=convert, to_cpu=to_cpu)
+
             params["scale_factor_centroid"] = self._get_param("AutoDelta.scale_factor_centroid", convert=convert, to_cpu=to_cpu)
 
         else:
@@ -534,7 +537,7 @@ class PyBasilica_mixture():
         alpha = self._to_cpu(params.get("alpha", self.alpha.clone()), move=to_cpu)
         alpha_prior = params["alpha_prior"]
 
-        sf = torch.ones(self.n_variants) if params["scale_factor_centroid"] is None else params["scale_factor_centroid"]
+        sf = torch.ones(self.n_variants, self.cluster) if params["scale_factor_centroid"] is None else params["scale_factor_centroid"]
         assert sf.shape == (self.n_variants, self.cluster)
         assert alpha_prior.shape == (self.cluster, self.n_variants, self.K)
         assert alpha.shape == (self.n_samples, self.n_variants, self.K)
