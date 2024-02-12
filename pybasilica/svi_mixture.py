@@ -49,9 +49,7 @@ class PyBasilica_mixture():
         self._set_fit_settings(lr=lr, optim_gamma=optim_gamma, n_steps=n_steps, \
                                compile_model=compile_model, CUDA=CUDA, store_parameters=store_parameters,
                                seed=seed, nonparam=nonparam)
-
         self._set_hyperparams(enumer=enumer, cluster=cluster, hyperparameters=hyperparameters)
-
         self._init_seed = 15
 
 
@@ -286,13 +284,12 @@ class PyBasilica_mixture():
 
         pi_km = torch.ones((self.cluster,))
         alpha_prior_km = torch.ones((self.cluster, self.K * self.n_variants)) / self.K
-
+        
         km = self.run_kmeans(X=alpha_km, G=self.cluster, seed=self._init_seed)
-
         clusters = torch.tensor(km.labels_)
 
         ## setup mixing proportion vector
-        pi_km = torch.tensor([(np.where(clusters == g)[0].shape[0]) for g in range(km.n_clusters)], dtype=torch.float64)
+        pi_km = torch.tensor([(torch.where(clusters == g)[0].shape[0]) for g in range(km.n_clusters)], dtype=torch.float64)
         pi_km = dist.Dirichlet(pi_km).sample()
         pi_km[pi_km < 1e-15] = 1e-15
         pi_km = self._norm_and_clamp(pi_km)
@@ -315,10 +312,8 @@ class PyBasilica_mixture():
         pi = self._to_gpu(pi_km, move=True)
         alpha_prior = self._to_gpu(torch.stack(alpha_prior), move=True)
         alpha_prior = torch.permute(alpha_prior.clone().detach().double(), (1,0,2))
-
         variances = self._compute_empirical_variance(alpha=self.alpha, 
                                                      clusters=clusters)
-
         init_scale_factors = self._compute_scale_factors(alpha_prior=alpha_prior, variances=variances)
         sf_centroid = init_scale_factors.repeat(self.cluster, 1).permute((1,0)).double()
 
@@ -333,7 +328,7 @@ class PyBasilica_mixture():
     def _compute_empirical_variance(self, alpha, clusters):
         variances = torch.zeros(self.cluster, self.n_variants, self.K)
         for g in range(self.cluster):
-            alpha_g = alpha[np.where(clusters == g)[0]]
+            alpha_g = alpha[torch.where(clusters == g)[0]]
             for v in range(self.n_variants):
                 if alpha_g.shape[0] > 0:
                     alpha_v = alpha_g[:,v,:]
@@ -350,6 +345,9 @@ class PyBasilica_mixture():
         if alpha_prior is None:
             alpha_prior = self.get_param_dict(convert=False, permute=True, concat=False, to_cpu=False)["alpha_prior"]
 
+        variances = self._to_cpu(variances)
+        alpha_prior = self._to_cpu(alpha_prior)
+
         assert variances.shape == (self.cluster, self.n_variants, self.K)
         assert alpha_prior.shape == (self.cluster, self.n_variants, self.K)
 
@@ -359,8 +357,8 @@ class PyBasilica_mixture():
                 sf_gv = direct(func=self.variance_condition, bounds=([1.,1000.],), 
                                args=(variances[g, v], alpha_prior[g, v]), maxiter=100).x
                 if isinstance(sf_gv, torch.Tensor): sf_vector[g, v] = sf_gv.clone().detach()
-                else: sf_vector[g, v] = torch.tensor(sf_gv)
-
+                else: sf_vector[g, v] = self._to_gpu(torch.tensor(sf_gv))
+        
         # keep the min for each variant
         scale_factors = torch.amax(sf_vector, dim=0)
         scale_factors[scale_factors < 1.] = 1.
@@ -425,6 +423,7 @@ class PyBasilica_mixture():
         pyro.get_param_store().clear()
 
         self.alpha = self._to_gpu(self.alpha)
+
         self._initialize_params()
 
         elbo = Trace_ELBO()
@@ -446,9 +445,9 @@ class PyBasilica_mixture():
             self.losses.append(loss)
 
             # self.likelihoods.append(self._likelihood_mixture(to_cpu=False).sum())
-
+            
             if self.store_parameters and i%train_params_each==0:
-                self.train_params.append(self.get_param_dict(convert=True, to_cpu=False))
+                self.train_params.append(self.get_param_dict(convert=True, to_cpu=True))
 
             if i%5 == 0:
                 t.set_description("ELBO %f" % loss)
@@ -476,7 +475,8 @@ class PyBasilica_mixture():
             if self.nonparam:
                 beta_pi = self._get_param("AutoDelta.beta_pi", convert=False, to_cpu=to_cpu)
                 params["pi"] = self._mix_weights(beta_pi)
-                if convert: params["pi"] = params["pi"].numpy()
+                if convert: 
+                    params["pi"] = self._to_cpu(params["pi"], move=True).numpy()
             else:
                 params["pi"] = self._get_param("AutoDelta.pi", convert=convert, to_cpu=to_cpu)
             params["z_tau"] = self._get_param("AutoDelta.z_tau", convert=convert, to_cpu=to_cpu)
@@ -527,7 +527,9 @@ class PyBasilica_mixture():
             par = par.clone().detach()
             if permute and len(par.shape) > 2: par = torch.permute(par, (1,0,2))
         if concat: par = self._concat_tensors(par, dim=1)
-        if convert: par = np.array(par)
+        if convert: 
+            par = self._to_cpu(par, move=True)
+            par = np.array(par)
         return par
 
 
@@ -576,7 +578,7 @@ class PyBasilica_mixture():
 
         probs = torch.exp(ll_k - ll) if compute_exp else ll_k - ll
         z = torch.argmax(probs, dim=0)
-        return self._to_cpu(z.long().numpy(), move=to_cpu), self._to_cpu(probs, move=to_cpu)
+        return self._to_cpu(z.long(), move=True).numpy(), self._to_cpu(probs, move=to_cpu)
 
 
     def _logsumexp(self, weighted_lp) -> torch.Tensor:
@@ -673,7 +675,8 @@ class PyBasilica_mixture():
                 pad_dims = max_shape - par_i.shape[1]
                 columns = list(str(i)+"_"+par_i.columns) + [str(i)+"_P"+str(j) for j in range(pad_dims)]
                 index = par_i.index
-                values = F.pad(input=self._to_cpu(torch.tensor(par_i.values)), pad=(0, pad_dims, 0,0), mode="constant", value=MIN_POS_N)
+                values = F.pad(input=self._to_cpu(torch.tensor(par_i.values), move=True), \
+                               pad=(0, pad_dims, 0,0), mode="constant", value=MIN_POS_N)
                 new_param.append(pd.DataFrame(values.numpy(), index=index, columns=columns))
             else:
                 new_param.append(par_i.copy(deep=True))
