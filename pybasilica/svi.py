@@ -92,7 +92,7 @@ class PyBasilica():
                                                                 torch.ones(self.k_denovo, dtype=torch.float64)))
 
             elif isinstance(alpha_conc, int) or isinstance(alpha_conc, float):
-                ## if given as input, the fixed signatures will have a user-defined concentration
+                # if given as input, the fixed signatures will have a user-defined concentration
                 self.hyperparameters["alpha_conc"] = torch.cat((alpha_conc * torch.ones(self.k_fixed, dtype=torch.float64),
                                                                 torch.ones(self.k_denovo, dtype=torch.float64)))
             else:
@@ -136,9 +136,6 @@ class PyBasilica():
         self.fixed_names = list(beta_fixed.index) if isinstance(beta_fixed, pd.DataFrame) else ["F"+str(f+1) for f in range(beta_fixed.shape[0])]
 
         if isinstance(beta_fixed, pd.DataFrame):
-        #     first = [i for i in self.fixed_names if i in ["SBS1","SBS5"]]
-        #     others = [i for i in self.fixed_names if i not in ["SBS1","SBS5"]]
-        #     beta_fixed = beta_fixed.loc[first + others]
             beta_fixed = beta_fixed.values
 
         self.beta_fixed = torch.tensor(beta_fixed, dtype=torch.float64)
@@ -510,15 +507,6 @@ class PyBasilica():
 
         if (isinstance(aic, torch.Tensor)): self.aic = aic.item()
         else: self.aic = aic
-
-
-    # def _set_icl(self):
-    #     icl = self.bic + self._compute_entropy()
-    #     self.icl = icl.item()
-
-
-    # def _compute_denovo_cosine(self):
-    #     denovo 
 
 
     def _compute_entropy(self) -> np.array:

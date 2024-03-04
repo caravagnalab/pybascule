@@ -28,7 +28,6 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
 
     kwargs = {
         "x":x,
-        # "cluster":None,
         "lr":lr,
         "optim_gamma":optim_gamma,
         "n_steps":n_steps,
@@ -38,14 +37,8 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
         "hyperparameters":hyperparameters,
         "compile_model":compile_model,
         "CUDA":CUDA,
-        # "enforce_sparsity":enforce_sparsity,
-        # "regularizer":regularizer,
-        # "reg_weight":reg_weight,
         "store_parameters":store_parameters,
         "stage":stage,
-        # "regul_compare":regul_compare,
-        # "regul_denovo":regul_denovo,
-        # "regul_fixed":regul_fixed
         }
 
     kwargs_mixture = {
@@ -176,144 +169,4 @@ def _convert_fits_aux(fits, input):
     for _, v_1 in fits.items(): 
         for _, v_2 in v_1.items():
             v_2.convert_to_dataframe(input)
-
-
-# def select_best(parlist, parname, seed, kwargs, classname, save_all_fits, score):
-#     bestScore, secondScore = maxsize, maxsize
-#     best_idd, secondBest = None, None
-
-#     scores_k, all_fits = dict(), dict()
-#     for k in parlist:
-#         idd = parname + ":" + str(k)
-#         kwargs[parname] = k
-
-#         obj, fits_scores, fits_seed = single_run(seed_list=seed, kwargs=kwargs, classname=classname, score=score)
-
-#         if score == "bic": score_k = obj.bic
-#         elif score == "icl": score_k = obj.icl
-
-#         if score_k < bestScore:
-#             bestScore, best_idd = score_k, 
-#         if bestScore == secondScore or (score_k > bestScore and score_k < secondScore):
-#             secondScore, secondBest = score_k, deepcopy(obj)
-
-#         bestRun.fits_seed = fits_seed
-#         bestRun.idd = idd
-#         scores_k[idd] = fits_scores
-#         if save_all_fits: 
-#             obj.fits_seed = fits_seed
-#             all_fits[idd] = obj
-
-#     return bestRun, secondBest, scores_k, all_fits
-
-
-
-'''
-#import utilities
-
-import torch
-import pyro
-import pyro.distributions as dist
-
-from pybasilica import svi
-from pybasilica import utilities
-
-
-
-#------------------------------------------------------------------------------------------------
-# run model with single k value
-#------------------------------------------------------------------------------------------------
-def single_k_run(params):
-    #params = {
-    #    "M" :               torch.Tensor
-    #    "beta_fixed" :      torch.Tensor | None
-    #    "k_denovo" :        int
-    #    "lr" :              int
-    #    "steps_per_iter" :  int
-    #}
-    #"alpha" :           torch.Tensor    added inside the single_k_run function
-    #"beta" :            torch.Tensor    added inside the single_k_run function
-    #"alpha_init" :      torch.Tensor    added inside the single_k_run function
-    #"beta_init" :       torch.Tensor    added inside the single_k_run function
-
-    # if No. of inferred signatures and input signatures are zero raise error
-    #if params["beta_fixed"] is None and params["k_denovo"]==0:
-    #    raise Exception("Error: both denovo and fixed signatures are zero")
-
-
-    #-----------------------------------------------------
-    #M = params["M"]
-    num_samples = params["M"].size()[0]
-
-    if params["beta_fixed"] is None:
-        k_fixed = 0
-    else:
-        k_fixed = params["beta_fixed"].size()[0]
-    
-    k_denovo = params["k_denovo"]
-
-    if k_fixed + k_denovo == 0:
-        raise Exception("Error: both denovo and fixed signatures are zero")
-    #-----------------------------------------------------
-
-    
-    #----- variational parameters initialization ----------------------------------------OK
-    params["alpha_init"] = dist.Normal(torch.zeros(num_samples, k_denovo + k_fixed), 1).sample()
-    if k_denovo > 0:
-        params["beta_init"] = dist.Normal(torch.zeros(k_denovo, 96), 1).sample()
-
-    #----- model priors initialization --------------------------------------------------OK
-    params["alpha"] = dist.Normal(torch.zeros(num_samples, k_denovo + k_fixed), 1).sample()
-    if k_denovo > 0:
-        params["beta"] = dist.Normal(torch.zeros(k_denovo, 96), 1).sample()
-
-    svi.inference(params)
-
-    #----- update model priors initialization -------------------------------------------OK
-    params["alpha"] = pyro.param("alpha").clone().detach()
-    if k_denovo > 0:
-        params["beta"] = pyro.param("beta").clone().detach()
-
-    #----- outputs ----------------------------------------------------------------------OK
-    alpha_tensor, beta_tensor = utilities.get_alpha_beta(params)  # dtype: torch.Tensor (beta_tensor==0 if k_denovo==0)
-    #lh = utilities.log_likelihood(params)           # log-likelihood
-    bic = utilities.compute_bic(params)                     # BIC
-    #M_R = utilities.Reconstruct_M(params)           # dtype: tensor
-    
-    return bic, alpha_tensor, beta_tensor
-
-
-#------------------------------------------------------------------------------------------------
-# run model with list of k value
-#------------------------------------------------------------------------------------------------
-def multi_k_run(params, k_list):
-    
-    #params = {
-    #    "M" :               torch.Tensor
-    #    "beta_fixed" :      torch.Tensor
-    #    "lr" :              int
-    #    "steps_per_iter" :  int
-    #}
-    #"k_denovo" : int    added inside the multi_k_run function
-    
-
-    bic_best = 10000000000
-    k_best = -1
-
-    for k_denovo in k_list:
-        try:
-            params["k_denovo"] = int(k_denovo)
-            bic, alpha, beta = single_k_run(params)
-            if bic <= bic_best:
-                bic_best = bic
-                k_best = k_denovo
-                alpha_best = alpha
-                beta_best = beta
-
-        except Exception:
-            continue
-    
-    return k_best, alpha_best, beta_best
-
-'''
 
