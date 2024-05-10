@@ -709,6 +709,8 @@ class PyBasilica_mixture():
 
         self._set_init_params(sigs)
 
+        self.n_groups = len(np.unique(self.groups))
+
 
     def _convert_pars(self, param_dict, sigs, sample_names):
         for parname, par in param_dict.items():

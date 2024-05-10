@@ -122,12 +122,13 @@ def run_fit(seed_list, kwargs, parname, parlist, score_name, store_fits, cls):
         kwargs[parname] = i
         best_i, scores_i, fits_i = single_run(seed_list=seed_list, kwargs=kwargs, cls=cls, score_name=score_name, idd=idd_i)
 
+        if parname == "cluster": idd_i = parname + ":" + str(i) + "_" + str(len(np.unique(best_i.groups)))
+
         sc_i = best_i.__dict__[score_name]
 
         if best_run is None or sc_i < best_score:
             best_score = sc_i
             best_run = deepcopy(best_i)
-            best_idd = idd_i
 
         scores[idd_i] = scores_i
         if store_fits: 
