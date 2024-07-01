@@ -129,7 +129,7 @@ class PyBasilica_mixture():
         '''
         beta1m_cumprod = (1 - beta).cumprod(-1)
         return F.pad(beta, (0, 1), value=1) * F.pad(beta1m_cumprod, (1, 0), value=1)
-    
+
 
     # alpha -> N x V x K; alpha_prior -> G x V x K; pi -> [G]
     def model_mixture(self):
