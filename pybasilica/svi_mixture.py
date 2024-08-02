@@ -354,6 +354,12 @@ class PyBasilica_mixture():
         sf_vector = torch.zeros(self.cluster, self.n_variants).double()
         for g in range(self.cluster):
             for v in range(self.n_variants):
+                # variances is a GxVxK tensor with variances in alpha values for each group/variant/signature
+                # for each group/variant we test several values of `sf` (bounds=[1,1000])
+                # `direct` will minimize the function provided in `func`
+                # we compare the empirical variance of the alpha matrix with the variance of 
+                # the Dirichlet with parameters the rescaled centroids [higher SF -> lower variance]
+                # we're minimising the distance between empirical and theoretical variance
                 sf_gv = direct(func=self.variance_condition, bounds=([1.,1000.],), 
                                args=(variances[g, v], alpha_prior[g, v]), maxiter=100).x
                 if isinstance(sf_gv, torch.Tensor): sf_vector[g, v] = sf_gv.clone().detach()
