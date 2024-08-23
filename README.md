@@ -1,6 +1,4 @@
-# pybasilica
-
-**IMPORTANT:** This package is no longer maintained. Please switch to [pybascule](https://github.com/caravagnalab/pybascule) for future updates.
+# pybascule
 
 Detecting mutational signatures via bayesian inference and reference catalog
 

@@ -1,9 +1,7 @@
-import random
+import torch
 import pyro
 import pyro.distributions as dist
-import numpy as np
 import pandas as pd
-import torch
 
 def norm_and_clamp(par):
     mmin = 0

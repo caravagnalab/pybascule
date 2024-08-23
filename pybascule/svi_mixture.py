@@ -18,7 +18,7 @@ from tqdm import trange
 
 MIN_POS_N = torch.finfo(torch.float32).tiny
 
-class PyBasilica_mixture():
+class PyBascule_mixture():
     def __init__(
         self,
         alpha,
