@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name = "pybascule",
-    version = "1.0.0",
+    version = "1.0.1",
     description = "Bayesian NMF signatures deconvolution and DP clustering.",
     long_description = long_description,
     long_description_content_type = "text/markdown",
@@ -16,7 +16,7 @@ setup(
         "pandas>=1.4.2",
         "pyro-api==0.1.2",
         "pyro-ppl==1.8.0",
-        "numpy>=1.21.5",
+        "numpy==1.*",
         "torch==1.*",
         "tqdm",
         "statsmodels",
