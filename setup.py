@@ -1,11 +1,23 @@
+import warnings
 from setuptools import setup
+from setuptools.command.install import install
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
+class CustomInstallCommand(install):
+    def run(self):
+        warnings.simplefilter('default')
+        warnings.warn(
+            "You are installing 'your_package', which is deprecated. "
+            "Please use 'new_package_name' instead.",
+            DeprecationWarning
+        )
+        install.run(self)
+
 setup(
     name = "pybasilica",
-    version = "0.3.0",
+    version = "0.4.0",
     description = "Bayesian NMF signatures deconvolution and DP clustering.",
     long_description = long_description,
     long_description_content_type = "text/markdown",
@@ -23,4 +35,7 @@ setup(
         "statsmodels",
         "uniplot"
         ],
+    cmdclass={
+        "install": CustomInstallCommand,
+    },
 )
