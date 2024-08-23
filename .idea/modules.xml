@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/pybasilica.iml" filepath="$PROJECT_DIR$/.idea/pybasilica.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/pybascule.iml" filepath="$PROJECT_DIR$/.idea/pybascule.iml" />
     </modules>
   </component>
 </project>

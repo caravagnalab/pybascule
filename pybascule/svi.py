@@ -1,10 +1,10 @@
-import numpy as np
-import pandas as pd
 import torch
 import pyro
+import numpy as np
+import pandas as pd
 import pyro.distributions.constraints as constraints
 import pyro.distributions as dist
-import torch.nn.functional as F
+
 from pyro.infer import SVI, Trace_ELBO, JitTrace_ELBO
 from collections import defaultdict
 from tqdm import trange
@@ -13,7 +13,7 @@ from tqdm import trange
 MIN_POS_N = torch.finfo(torch.float32).tiny
 
 
-class PyBasilica():
+class PyBascule():
     def __init__(
         self,
         x,

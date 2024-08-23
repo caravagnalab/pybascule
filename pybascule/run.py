@@ -1,17 +1,10 @@
-# from matplotlib import interactive
-from rich.console import Console
-from rich.table import Table
-from rich import box
-import pandas as pd
 import numpy as np
-from rich.progress import Progress, BarColumn, TextColumn, TaskProgressColumn, TimeRemainingColumn, SpinnerColumn, RenderableColumn
-from rich.live import Live
-from rich.table import Table
+
 from sys import maxsize
 from copy import deepcopy
 
-from pybasilica.svi import PyBasilica
-from pybasilica.svi_mixture import PyBasilica_mixture
+from pybascule.svi import PyBascule
+from pybascule.svi_mixture import PyBascule_mixture
 
 
 def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1, n_steps = 500, enumer = "parallel", 
@@ -59,7 +52,7 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
     bestK, scoresK, fitsK, fits_alpha = None, None, dict(), dict()
     if x is not None:
         bestK, scoresK, fitsK = run_fit(seed_list=seed_list, kwargs=kwargs, parname="k_denovo",
-                                        parlist=k_list, score_name="bic", store_fits=store_fits, cls=PyBasilica)
+                                        parlist=k_list, score_name="bic", store_fits=store_fits, cls=PyBascule)
         bestK.scores = scoresK
         bestK.fits = fitsK
 
@@ -69,7 +62,7 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
         kwargs_mixture["alpha"] = alpha
         bestCL, scoresCL, fitsCL = run_fit(seed_list=seed_list, kwargs=kwargs_mixture, parname="cluster",
                                            parlist=list(cluster), score_name="icl", store_fits=store_fits,
-                                           cls=PyBasilica_mixture)
+                                           cls=PyBascule_mixture)
         bestCL.scores = scoresCL
         bestCL.fits = fitsCL
 
