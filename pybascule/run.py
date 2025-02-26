@@ -17,7 +17,7 @@ def fit(x=None, alpha=None, k_list=[0,1,2,3,4,5], lr = 0.005, optim_gamma = 0.1,
     elif isinstance(cluster, int): cluster = [cluster]
     if isinstance(k_list, int): k_list = [k_list]
 
-    if x is None and alpha is None: raise "Both count and exposure matrices are None."
+    if x is None and alpha is None: raise ValueError("Both count and exposure matrices are None.")
 
     kwargs = {
         "x":x,
